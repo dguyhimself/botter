@@ -11,7 +11,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PORT = process.env.PORT || 3000;
 const DOMAIN = process.env.DOMAIN;
-const MODEL_NAME = "gemini-1.5-flash"; // Stable, fast, and supports images
+const MODEL_NAME = "gemini-2.5-flash"; // Stable, fast, and supports images
 
 if (!BOT_TOKEN || !GEMINI_API_KEY) {
   console.error("❌ CRITICAL: Missing BOT_TOKEN or GEMINI_API_KEY.");
