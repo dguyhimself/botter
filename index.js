@@ -40,7 +40,7 @@ bot.on("text", async (ctx) => {
     
     if (!chat) {
         chat = ai.chats.create({
-        model: "gemini-1.5-flash", // <--- TO THIS
+        model: "gemini-2.5-flash", // <--- TO THIS
         config: {
           temperature: 0.7,
         },
