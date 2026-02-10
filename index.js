@@ -7,7 +7,7 @@ import "dotenv/config";
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const PORT = process.env.PORT || 3000;
-const DOMAIN = process.env.DOMAIN; // Your Render URL (e.g. https://my-bot.onrender.com)
+const DOMAIN = process.env.DOMAIN; 
 
 if (!BOT_TOKEN || !GEMINI_API_KEY) {
   console.error("Missing Environment Variables: Make sure BOT_TOKEN and GEMINI_API_KEY are set.");
@@ -20,13 +20,11 @@ const app = express();
 const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
 // Simple in-memory store for chat sessions
-// Note: This resets if the Render server restarts (common on free tier)
 const chatSessions = new Map();
 
 // 3. Bot Logic
 bot.start((ctx) => {
-  ctx.reply("Hello! I am powered by Gemini AI. Ask me anything!");
-  // Reset history on start
+  ctx.reply("Hello! I am powered by Gemini 2.0. Ask me anything!");
   chatSessions.delete(ctx.from.id);
 });
 
@@ -34,17 +32,15 @@ bot.on("text", async (ctx) => {
   const userId = ctx.from.id;
   const userMessage = ctx.message.text;
 
-  // Show a "typing..." status
   ctx.sendChatAction("typing");
 
   try {
-    // Get or create a chat session for this user
+    // Get or create a chat session
     let chat = chatSessions.get(userId);
     
     if (!chat) {
-      // Create a new chat session using the Gemini SDK
       chat = ai.chats.create({
-        model: "gemini-2.0-flash", // Or "gemini-1.5-flash" / "gemini-1.5-pro"
+        model: "gemini-2.0-flash",
         config: {
           temperature: 0.7,
         },
@@ -53,43 +49,45 @@ bot.on("text", async (ctx) => {
             role: "user",
             parts: [{ text: "You are a helpful and concise Telegram assistant." }],
           },
+          {
+            role: "model",
+            parts: [{ text: "Understood. I will help you with whatever you need." }],
+          },
         ],
       });
       chatSessions.set(userId, chat);
     }
 
-    // Generate content using the new SDK's chat method
+    // Send message using the new SDK syntax (uses 'message' not 'content')
     const result = await chat.sendMessage({
-      content: userMessage,
+      message: userMessage,
     });
     
-    // Send the response back to Telegram
-    const responseText = result.text; 
-    await ctx.reply(responseText);
+    // The new SDK returns the text directly in result.text usually
+    // or sometimes we need result.response.text() depending on exact version.
+    // usage: console.log(result.text);
+    await ctx.reply(result.text);
 
   } catch (error) {
     console.error("Error generating content:", error);
-    ctx.reply("Sorry, I had trouble thinking of a response. Try again later.");
+    // If the session is broken/expired, delete it so the user can start over
+    chatSessions.delete(userId);
+    ctx.reply("Sorry, I encountered an error. Please try sending your message again.");
   }
 });
 
 // 4. Setup Webhook & Server
 async function startServer() {
-  // If a DOMAIN is provided (Production), use Webhook
   if (DOMAIN) {
     const webhookPath = `/telegraf/${bot.secretPathComponent()}`;
-    // Tell Telegram to send updates to this URL
     await bot.telegram.setWebhook(`${DOMAIN}${webhookPath}`);
-    // Register the webhook callback with Express
     app.use(bot.webhookCallback(webhookPath));
     console.log(`Webhook set to: ${DOMAIN}${webhookPath}`);
   } else {
-    // Local development: fallback to polling
     console.log("No DOMAIN provided, starting in polling mode...");
     bot.launch();
   }
 
-  // Define a simple root route for health checks
   app.get("/", (req, res) => res.send("Bot is alive!"));
 
   app.listen(PORT, () => {
