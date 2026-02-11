@@ -85,7 +85,7 @@ async function initSession(userId, personaKey = "homie", provider = "GEMINI", ge
         }));
 
         chat = ai.chats.create({
-            model: "gemini-1.5-flash",
+            model: "gemini-2.5-flash-lite",
             config: { 
                 systemInstruction: PERSONAS[personaKey].instruction,
                 temperature: 0.9,
