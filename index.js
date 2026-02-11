@@ -8,6 +8,52 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
 const PORT = process.env.PORT || 3000;
 
+// --- DARI TRANSLATIONS & CONSTANTS ---
+const TEXTS = {
+    welcome: 'سلام! به ربات چت ناشناس افغان خوش آمدید. 🇦🇫\nبرای شروع لطفا پروفایل خود را تکمیل کنید.',
+    main_menu_title: 'منوی اصلی:',
+    btn_connect: '🎲 وصل شدن به ناشناس',
+    btn_profile: '👤 پروفایل من',
+    btn_edit: '✏️ ویرایش پروفایل',
+    btn_support: '💬 پشتیبانی',
+    
+    // Registration Steps
+    ask_name: 'لطفا نام یا لقب خود را وارد کنید:',
+    ask_gender: 'جنسیت خود را انتخاب کنید:',
+    ask_age: 'سن خود را انتخاب کنید:',
+    ask_province: 'از کدام ولایت هستید؟',
+    ask_job: 'شغل شما چیست؟',
+    ask_purpose: 'هدف شما از بودن در اینجا چیست؟',
+    ask_photo: 'لطفا یک عکس برای پروفایل خود ارسال کنید (یا دکمه رد کردن را بزنید):',
+    
+    // Chat Actions
+    searching: '🔍 در حال جستجوی هم‌صحبت... لطفا صبر کنید.',
+    connected: '✅ به یک نفر وصل شدید!\nالان میتوانید چت کنید.',
+    partner_disconnected: '🚫 طرف مقابل مکالمه را قطع کرد.',
+    you_disconnected: '🚫 شما مکالمه را قطع کردید.',
+    stop_search: '❌ لغو جستجو',
+    
+    // Chat Buttons
+    btn_disconnect: '🚫 قطع مکالمه',
+    btn_view_profile: '📄 مشاهده پروفایل طرف',
+    
+    // Profile View
+    profile_viewed: '👁 طرف مقابل پروفایل شما را مشاهده کرد.',
+    
+    // Validation
+    error_photo: 'لطفا فقط عکس بفرستید.',
+    error_text: 'لطفا از دکمه ها استفاده کنید.',
+};
+
+// Options
+const GENDERS = ['پسر 👦', 'دختر 👧'];
+const PROVINCES = ['کابل', 'هرات', 'قندهار', 'بلخ', 'ننگرهار', 'بامیان', 'غزنی', 'بدخشان', 'کندز', 'خارج از کشور'];
+const JOBS = ['کارگر 🛠', 'شغل آزاد 💼', 'محصل 🎓', 'بیکار 🏠', 'کارمند 📝'];
+const PURPOSES = ['سرگرمی 😂', 'پیدا کردن دوست 🤝', 'ازدواج 💍', 'چت کردن 💬'];
+
+// Generate Ages 12-80
+const AGES = Array.from({ length: 69 }, (_, i) => (i + 12).toString());
+
 // --- DATABASE SCHEMA ---
 mongoose.connect(MONGO_URI)
     .then(() => console.log('Connected to MongoDB'))
@@ -15,9 +61,14 @@ mongoose.connect(MONGO_URI)
 
 const userSchema = new mongoose.Schema({
     telegramId: { type: Number, required: true, unique: true },
-    firstName: String,
+    firstName: String, // Telegram name
+    displayName: String, // Custom name in bot
     username: String,
-    registrationStep: { type: String, default: 'completed' },
+    
+    // Registration State
+    regStep: { type: String, default: 'completed' }, // 'name', 'gender', 'age', etc.
+    isEditing: { type: Boolean, default: false }, // true if editing specific field
+    
     profile: {
         gender: String,
         age: String,
@@ -26,6 +77,7 @@ const userSchema = new mongoose.Schema({
         purpose: String,
         photoId: String
     },
+    
     status: { type: String, default: 'idle' }, // idle, searching, chatting
     partnerId: Number
 });
@@ -35,27 +87,31 @@ const User = mongoose.model('User', userSchema);
 // --- INITIALIZE BOT ---
 const bot = new Telegraf(BOT_TOKEN);
 
-// --- CONSTANTS & KEYBOARDS ---
-const PROVINCES = ['Kabul', 'Herat', 'Kandahar', 'Balkh', 'Nangarhar', 'Bamyan', 'Other'];
-const JOBS = ['Worker', 'Personal Business', 'Unemployed', 'Student'];
-const PURPOSES = ['For Fun', 'Finding a Friend', 'Marriage', 'Just Chat'];
-
-// --- HELPER FUNCTION TO CHUNK ARRAYS ---
+// --- HELPER FUNCTIONS ---
 function chunkArray(arr, size) {
     return Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
         arr.slice(i * size, i * size + size)
     );
 }
 
-// Helper to get Main Menu
-const getMainMenu = () => {
-    return Markup.keyboard([
-        ['🎲 Connect to Stranger'],
-        ['👤 My Profile', '✏️ Edit Profile']
-    ]).resize();
-};
+// Keyboards
+const getMainMenu = () => Markup.keyboard([
+    [TEXTS.btn_connect],
+    [TEXTS.btn_profile, TEXTS.btn_edit]
+]).resize();
 
-// --- MIDDLEWARE: GET USER ---
+const getChatMenu = () => Markup.keyboard([
+    [TEXTS.btn_disconnect, TEXTS.btn_view_profile]
+]).resize();
+
+const getEditMenu = () => Markup.keyboard([
+    ['✏️ تغییر نام', '✏️ تغییر عکس'],
+    ['✏️ تغییر سن', '✏️ تغییر جنسیت'],
+    ['✏️ تغییر ولایت', '✏️ تغییر شغل'],
+    ['✏️ تغییر هدف', '🔙 برگشت به منوی اصلی']
+]).resize();
+
+// --- MIDDLEWARE ---
 bot.use(async (ctx, next) => {
     if (!ctx.chat || ctx.chat.type !== 'private') return;
     
@@ -65,7 +121,7 @@ bot.use(async (ctx, next) => {
             telegramId: ctx.from.id,
             firstName: ctx.from.first_name,
             username: ctx.from.username,
-            registrationStep: 'gender' 
+            regStep: 'name' // Start with Name
         });
         await user.save();
     }
@@ -76,117 +132,240 @@ bot.use(async (ctx, next) => {
 // --- COMMANDS ---
 
 bot.start(async (ctx) => {
-    if (ctx.user.registrationStep !== 'completed') {
-        return startRegistration(ctx);
+    if (ctx.user.regStep !== 'completed') {
+        return stepHandler(ctx); // Continue registration
     }
-    ctx.reply('Welcome back to Afghan Connect! 👋\nSelect an option below:', getMainMenu());
+    ctx.reply(TEXTS.welcome, getMainMenu());
 });
 
-// --- REGISTRATION LOGIC ---
-
-async function startRegistration(ctx) {
-    ctx.user.registrationStep = 'gender';
-    await ctx.user.save();
-    ctx.reply('Welcome! Let\'s set up your profile first.\n\nWhat is your Gender?', 
-        Markup.keyboard([['Male 👦', 'Female 👧']]).oneTime().resize());
-}
-
-// Handle Text & Photo Inputs
-bot.on(['text', 'photo'], async (ctx, next) => {
+// --- MAIN LOGIC HANDLER ---
+bot.on(['text', 'photo'], async (ctx) => {
     const user = ctx.user;
+    const text = ctx.message.text;
 
-    // 1. IF CHATTING - Relay Message
+    // 1. IF CHATTING
     if (user.status === 'chatting' && user.partnerId) {
+        // Handle Disconnect
+        if (text === TEXTS.btn_disconnect) {
+            return endChat(ctx.from.id, user.partnerId, ctx);
+        }
+        
+        // Handle Show Profile
+        if (text === TEXTS.btn_view_profile) {
+            return showPartnerProfile(ctx, user.partnerId);
+        }
+
+        // Relay Message
         try {
-            await ctx.copyMessage(user.partnerId); 
-            return;
+            await ctx.copyMessage(user.partnerId);
         } catch (error) {
             await endChat(ctx.from.id, user.partnerId, ctx);
-            return;
         }
+        return;
     }
 
-    // 2. IF REGISTERING - Handle Steps
-    if (user.registrationStep !== 'completed') {
-        // If user sends a photo but we expect text (unless step is photo)
-        if (ctx.message.photo && user.registrationStep !== 'photo') {
-             return ctx.reply('Please send text, not a photo.');
-        }
-
-        const text = ctx.message.text;
-
-        switch (user.registrationStep) {
-            case 'gender':
-                if (!['Male 👦', 'Female 👧'].includes(text)) return ctx.reply('Please verify using the buttons.');
-                user.profile.gender = text;
-                user.registrationStep = 'age';
-                await user.save();
-                return ctx.reply('How old are you? (Type a number, e.g., 22)', Markup.removeKeyboard());
-
-            case 'age':
-                if (isNaN(text) || text < 10 || text > 99) return ctx.reply('Please enter a valid age (10-99).');
-                user.profile.age = text;
-                user.registrationStep = 'province';
-                await user.save();
-                return ctx.reply('Which province are you from?', Markup.keyboard(chunkArray(PROVINCES, 2)).resize());
-
-            case 'province':
-                if (!PROVINCES.includes(text)) return ctx.reply('Please select from the buttons.');
-                user.profile.province = text;
-                user.registrationStep = 'job';
-                await user.save();
-                return ctx.reply('What is your job?', Markup.keyboard(chunkArray(JOBS, 2)).resize());
-
-            case 'job':
-                if (!JOBS.includes(text)) return ctx.reply('Please select from the buttons.');
-                user.profile.job = text;
-                user.registrationStep = 'purpose';
-                await user.save();
-                return ctx.reply('Why are you here?', Markup.keyboard(chunkArray(PURPOSES, 2)).resize());
-
-            case 'purpose':
-                if (!PURPOSES.includes(text)) return ctx.reply('Please select from the buttons.');
-                user.profile.purpose = text;
-                user.registrationStep = 'photo';
-                await user.save();
-                return ctx.reply('Finally, upload a profile picture 📸.', Markup.removeKeyboard());
-
-            case 'photo':
-                if (!ctx.message.photo) return ctx.reply('Please send a photo.');
-                const photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-                user.profile.photoId = photoId;
-                user.registrationStep = 'completed';
-                await user.save();
-                return ctx.reply('✅ Profile Setup Complete! You can now start chatting.', getMainMenu());
-        }
+    // 2. IF REGISTERING OR EDITING
+    if (user.regStep !== 'completed') {
+        return stepHandler(ctx);
     }
 
-    next();
+    // 3. MAIN MENU COMMANDS
+    if (text === TEXTS.btn_connect) return startSearching(ctx);
+    if (text === TEXTS.btn_profile) return showMyProfile(ctx);
+    if (text === TEXTS.btn_edit) {
+        ctx.reply('کدام قسمت را میخواهید ویرایش کنید؟ 👇', getEditMenu());
+        return;
+    }
+    if (text === TEXTS.stop_search) return stopSearching(ctx);
+
+    // 4. EDIT MENU COMMANDS
+    if (text === '🔙 برگشت به منوی اصلی') return ctx.reply(TEXTS.main_menu_title, getMainMenu());
+    
+    // Switch to Edit Mode
+    if (text.startsWith('✏️')) {
+        user.isEditing = true;
+        if (text.includes('نام')) user.regStep = 'name';
+        if (text.includes('عکس')) user.regStep = 'photo';
+        if (text.includes('سن')) user.regStep = 'age';
+        if (text.includes('جنسیت')) user.regStep = 'gender';
+        if (text.includes('ولایت')) user.regStep = 'province';
+        if (text.includes('شغل')) user.regStep = 'job';
+        if (text.includes('هدف')) user.regStep = 'purpose';
+        await user.save();
+        return stepHandler(ctx); // Trigger the prompt immediately
+    }
 });
 
-// --- MENU HANDLERS ---
+// --- WIZARD / STEP HANDLER ---
+async function stepHandler(ctx) {
+    const user = ctx.user;
+    const text = ctx.message.text;
+    const isEdit = user.isEditing;
 
-bot.hears('✏️ Edit Profile', (ctx) => startRegistration(ctx));
+    // Helper to finish step
+    const nextStep = async (nextState) => {
+        if (isEdit) {
+            user.regStep = 'completed';
+            user.isEditing = false;
+            await user.save();
+            ctx.reply('✅ تغییرات ذخیره شد.', getEditMenu());
+        } else {
+            user.regStep = nextState;
+            await user.save();
+            // Trigger next prompt
+            promptForStep(ctx, nextState);
+        }
+    };
 
-bot.hears('👤 My Profile', async (ctx) => {
+    // LOGIC FOR SAVING DATA
+    // Note: We check if the input is valid based on the *current* step stored in DB
+    
+    // 1. NAME
+    if (user.regStep === 'name') {
+        // If this is the prompt trigger (user didn't send text yet, just started step)
+        if (!text || text.startsWith('✏️') || text === '/start') {
+            return ctx.reply(TEXTS.ask_name, Markup.removeKeyboard());
+        }
+        user.displayName = text;
+        return nextStep('gender');
+    }
+
+    // 2. GENDER
+    if (user.regStep === 'gender') {
+        if (!GENDERS.includes(text)) {
+            return ctx.reply(TEXTS.ask_gender, Markup.keyboard(chunkArray(GENDERS, 2)).resize());
+        }
+        user.profile.gender = text;
+        return nextStep('age');
+    }
+
+    // 3. AGE
+    if (user.regStep === 'age') {
+        if (!AGES.includes(text)) {
+            // Show Age Grid (6 buttons per row)
+            return ctx.reply(TEXTS.ask_age, Markup.keyboard(chunkArray(AGES, 6)).resize());
+        }
+        user.profile.age = text;
+        return nextStep('province');
+    }
+
+    // 4. PROVINCE
+    if (user.regStep === 'province') {
+        if (!PROVINCES.includes(text)) {
+            return ctx.reply(TEXTS.ask_province, Markup.keyboard(chunkArray(PROVINCES, 3)).resize());
+        }
+        user.profile.province = text;
+        return nextStep('job');
+    }
+
+    // 5. JOB
+    if (user.regStep === 'job') {
+        if (!JOBS.includes(text)) {
+            return ctx.reply(TEXTS.ask_job, Markup.keyboard(chunkArray(JOBS, 2)).resize());
+        }
+        user.profile.job = text;
+        return nextStep('purpose');
+    }
+
+    // 6. PURPOSE
+    if (user.regStep === 'purpose') {
+        if (!PURPOSES.includes(text)) {
+            return ctx.reply(TEXTS.ask_purpose, Markup.keyboard(chunkArray(PURPOSES, 2)).resize());
+        }
+        user.profile.purpose = text;
+        return nextStep('photo');
+    }
+
+    // 7. PHOTO
+    if (user.regStep === 'photo') {
+        // Prompt
+        if (!ctx.message.photo && text !== 'بدون عکس') {
+            return ctx.reply(TEXTS.ask_photo, Markup.keyboard([['بدون عکس']]).resize());
+        }
+        
+        // Save
+        if (ctx.message.photo) {
+            user.profile.photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+        } else if (text === 'بدون عکس') {
+            user.profile.photoId = null;
+        }
+
+        if (isEdit) {
+            user.regStep = 'completed';
+            user.isEditing = false;
+            await user.save();
+            ctx.reply('✅ تغییرات ذخیره شد.', getEditMenu());
+        } else {
+            user.regStep = 'completed';
+            await user.save();
+            ctx.reply('🎉 پروفایل شما کامل شد!', getMainMenu());
+        }
+    }
+}
+
+// Helper to send the question for the *next* step (Used in Registration flow only)
+async function promptForStep(ctx, step) {
+    if (step === 'gender') ctx.reply(TEXTS.ask_gender, Markup.keyboard(chunkArray(GENDERS, 2)).resize());
+    if (step === 'age') ctx.reply(TEXTS.ask_age, Markup.keyboard(chunkArray(AGES, 6)).resize());
+    if (step === 'province') ctx.reply(TEXTS.ask_province, Markup.keyboard(chunkArray(PROVINCES, 3)).resize());
+    if (step === 'job') ctx.reply(TEXTS.ask_job, Markup.keyboard(chunkArray(JOBS, 2)).resize());
+    if (step === 'purpose') ctx.reply(TEXTS.ask_purpose, Markup.keyboard(chunkArray(PURPOSES, 2)).resize());
+    if (step === 'photo') ctx.reply(TEXTS.ask_photo, Markup.keyboard([['بدون عکس']]).resize());
+}
+
+// --- PROFILE FUNCTIONS ---
+
+async function showMyProfile(ctx) {
     const p = ctx.user.profile;
-    const caption = `👤 **My Profile**\n\n` +
-                    `👦 Gender: ${p.gender}\n` +
-                    `🎂 Age: ${p.age}\n` +
-                    `📍 Location: ${p.province}\n` +
-                    `💼 Job: ${p.job}\n` +
-                    `🔎 Looking for: ${p.purpose}`;
+    const name = ctx.user.displayName || ctx.user.firstName;
+    const caption = `👤 **پروفایل من**\n\n` +
+                    `📛 نام: ${name}\n` +
+                    `🚻 جنسیت: ${p.gender}\n` +
+                    `🎂 سن: ${p.age}\n` +
+                    `📍 ولایت: ${p.province}\n` +
+                    `💼 شغل: ${p.job}\n` +
+                    `🎯 هدف: ${p.purpose}`;
     
     if (p.photoId) {
         await ctx.replyWithPhoto(p.photoId, { caption: caption, parse_mode: 'Markdown' });
     } else {
         await ctx.reply(caption, { parse_mode: 'Markdown' });
     }
-});
+}
 
-bot.hears('🎲 Connect to Stranger', async (ctx) => {
-    if (ctx.user.status !== 'idle') return ctx.reply('You are already searching or chatting.');
+async function showPartnerProfile(ctx, partnerId) {
+    const partner = await User.findOne({ telegramId: partnerId });
+    if (!partner) return ctx.reply('خطا در دریافت پروفایل.');
 
+    const p = partner.profile;
+    const name = partner.displayName || 'ناشناس';
+    const caption = `👤 **پروفایل هم‌صحبت شما**\n\n` +
+                    `📛 نام: ${name}\n` +
+                    `🚻 جنسیت: ${p.gender}\n` +
+                    `🎂 سن: ${p.age}\n` +
+                    `📍 ولایت: ${p.province}\n` +
+                    `💼 شغل: ${p.job}\n` +
+                    `🎯 هدف: ${p.purpose}`;
+    
+    // Send Profile to requester
+    if (p.photoId) {
+        await ctx.replyWithPhoto(p.photoId, { caption: caption, parse_mode: 'Markdown' });
+    } else {
+        await ctx.reply(caption, { parse_mode: 'Markdown' });
+    }
+
+    // Notify the partner
+    try {
+        await ctx.telegram.sendMessage(partnerId, TEXTS.profile_viewed);
+    } catch (e) {}
+}
+
+// --- MATCHING LOGIC ---
+
+async function startSearching(ctx) {
+    if (ctx.user.status !== 'idle') return ctx.reply('شما در حال جستجو یا چت هستید.');
+
+    // Find Partner
     const partner = await User.findOne({ 
         status: 'searching', 
         telegramId: { $ne: ctx.user.telegramId } 
@@ -202,49 +381,23 @@ bot.hears('🎲 Connect to Stranger', async (ctx) => {
         partner.partnerId = ctx.user.telegramId;
         await partner.save();
 
-        await sendMatchMessage(ctx, ctx.user, partner);
-        await sendMatchMessage(ctx, partner, ctx.user);
+        // Send "Connected" message with Chat Menu
+        await ctx.telegram.sendMessage(ctx.user.telegramId, TEXTS.connected, getChatMenu());
+        await ctx.telegram.sendMessage(partner.telegramId, TEXTS.connected, getChatMenu());
         
     } else {
-        // NO MATCH
+        // NO MATCH -> QUEUE
         ctx.user.status = 'searching';
         await ctx.user.save();
-        ctx.reply('🔎 Searching for a user... Please wait.', Markup.keyboard([['❌ Stop Searching']]).resize());
+        ctx.reply(TEXTS.searching, Markup.keyboard([[TEXTS.stop_search]]).resize());
     }
-});
+}
 
-bot.hears('❌ Stop Searching', async (ctx) => {
+async function stopSearching(ctx) {
     if (ctx.user.status === 'searching') {
         ctx.user.status = 'idle';
         await ctx.user.save();
-        ctx.reply('Search stopped.', getMainMenu());
-    }
-});
-
-bot.command('end', async (ctx) => {
-    if (ctx.user.status === 'chatting') {
-        await endChat(ctx.user.telegramId, ctx.user.partnerId, ctx);
-    } else {
-        ctx.reply('You are not in a chat.');
-    }
-});
-
-// --- HELPERS ---
-
-async function sendMatchMessage(ctx, recipient, profileData) {
-    const p = profileData.profile;
-    const msg = `🔔 **User Found!**\n\n` +
-                `Gender: ${p.gender}\nAge: ${p.age}\nLoc: ${p.province}\nJob: ${p.job}\nGoal: ${p.purpose}\n\n` +
-                `_Say Hello! (Type /end to stop)_`;
-    
-    try {
-        if (p.photoId) {
-            await ctx.telegram.sendPhoto(recipient.telegramId, p.photoId, { caption: msg, parse_mode: 'Markdown' });
-        } else {
-            await ctx.telegram.sendMessage(recipient.telegramId, msg, { parse_mode: 'Markdown' });
-        }
-    } catch (e) {
-        console.log('Error sending match msg', e);
+        ctx.reply('جستجو متوقف شد.', getMainMenu());
     }
 }
 
@@ -253,25 +406,22 @@ async function endChat(userId1, userId2, ctx) {
     await User.updateOne({ telegramId: userId2 }, { status: 'idle', partnerId: null });
 
     try {
-        await ctx.telegram.sendMessage(userId1, '🚫 Chat ended.', getMainMenu());
-        await ctx.telegram.sendMessage(userId2, '🚫 Partner ended the chat.', getMainMenu());
+        await ctx.telegram.sendMessage(userId1, TEXTS.you_disconnected, getMainMenu());
+        await ctx.telegram.sendMessage(userId2, TEXTS.partner_disconnected, getMainMenu());
     } catch (e) {
         console.log('Error sending end chat msg');
     }
 }
 
-// --- SERVER SETUP ---
+// --- SERVER ---
 const app = express();
-app.get('/', (req, res) => res.send('Bot is running!'));
+app.get('/', (req, res) => res.send('Afghan Bot Running'));
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    
-    // START BOT
-    bot.launch(); 
+    console.log(`Server running on ${PORT}`);
+    bot.launch();
     console.log('Bot started');
 });
 
-// Graceful stop
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
