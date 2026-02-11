@@ -15,7 +15,7 @@ const API_KEYS = [
 
 const PORT = process.env.PORT || 3000;
 const DOMAIN = process.env.DOMAIN;
-const MODEL_NAME = "gemini-1.5-flash"; // Best for complex system prompts
+const MODEL_NAME = "gemini-2.5-flash-lite"; // Best for complex system prompts
 
 if (!BOT_TOKEN || API_KEYS.length === 0) {
   console.error("❌ CRITICAL: Missing BOT_TOKEN or at least one GEMINI_API_KEY.");
