@@ -17,7 +17,7 @@ const userSchema = new mongoose.Schema({
     telegramId: { type: Number, required: true, unique: true },
     firstName: String,
     username: String,
-    registrationStep: { type: String, default: 'completed' }, // tracks registration progress
+    registrationStep: { type: String, default: 'completed' },
     profile: {
         gender: String,
         age: String,
@@ -40,8 +40,16 @@ const PROVINCES = ['Kabul', 'Herat', 'Kandahar', 'Balkh', 'Nangarhar', 'Bamyan',
 const JOBS = ['Worker', 'Personal Business', 'Unemployed', 'Student'];
 const PURPOSES = ['For Fun', 'Finding a Friend', 'Marriage', 'Just Chat'];
 
+// --- HELPER FUNCTION TO CHUNK ARRAYS (Fixes the error) ---
+function chunkArray(arr, size) {
+    return Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
+        arr.slice(i * size, i * size + size)
+    );
+}
+
 // Helper to get Main Menu
 const getMainMenu = () => {
+    // We create a 2D array for the layout
     return Markup.keyboard([
         ['🎲 Connect to Stranger'],
         ['👤 My Profile', '✏️ Edit Profile']
@@ -50,7 +58,7 @@ const getMainMenu = () => {
 
 // --- MIDDLEWARE: GET USER ---
 bot.use(async (ctx, next) => {
-    if (ctx.chat.type !== 'private') return;
+    if (!ctx.chat || ctx.chat.type !== 'private') return;
     
     let user = await User.findOne({ telegramId: ctx.from.id });
     if (!user) {
@@ -58,7 +66,7 @@ bot.use(async (ctx, next) => {
             telegramId: ctx.from.id,
             firstName: ctx.from.first_name,
             username: ctx.from.username,
-            registrationStep: 'gender' // Start registration immediately for new users
+            registrationStep: 'gender' 
         });
         await user.save();
     }
@@ -81,7 +89,7 @@ async function startRegistration(ctx) {
     ctx.user.registrationStep = 'gender';
     await ctx.user.save();
     ctx.reply('Welcome! Let\'s set up your profile first.\n\nWhat is your Gender?', 
-        Markup.keyboard(['Male 👦', 'Female 👧']).oneTime().resize());
+        Markup.keyboard([['Male 👦', 'Female 👧']]).oneTime().resize());
 }
 
 // Handle Text & Photo Inputs
@@ -91,11 +99,9 @@ bot.on(['text', 'photo'], async (ctx, next) => {
     // 1. IF CHATTING - Relay Message
     if (user.status === 'chatting' && user.partnerId) {
         try {
-            // Forward everything (text, photo, sticker, voice) to partner
             await ctx.copyMessage(user.partnerId); 
             return;
         } catch (error) {
-            // If partner blocked bot
             await endChat(ctx.from.id, user.partnerId, ctx);
             return;
         }
@@ -103,6 +109,11 @@ bot.on(['text', 'photo'], async (ctx, next) => {
 
     // 2. IF REGISTERING - Handle Steps
     if (user.registrationStep !== 'completed') {
+        // If user sends a photo but we expect text (unless step is photo)
+        if (ctx.message.photo && user.registrationStep !== 'photo') {
+             return ctx.reply('Please send text, not a photo.');
+        }
+
         const text = ctx.message.text;
 
         switch (user.registrationStep) {
@@ -118,21 +129,24 @@ bot.on(['text', 'photo'], async (ctx, next) => {
                 user.profile.age = text;
                 user.registrationStep = 'province';
                 await user.save();
-                return ctx.reply('Which province are you from?', Markup.keyboard(PROVINCES).chunk(2).resize());
+                // FIXED: Using chunkArray helper
+                return ctx.reply('Which province are you from?', Markup.keyboard(chunkArray(PROVINCES, 2)).resize());
 
             case 'province':
                 if (!PROVINCES.includes(text)) return ctx.reply('Please select from the buttons.');
                 user.profile.province = text;
                 user.registrationStep = 'job';
                 await user.save();
-                return ctx.reply('What is your job?', Markup.keyboard(JOBS).chunk(2).resize());
+                // FIXED: Using chunkArray helper
+                return ctx.reply('What is your job?', Markup.keyboard(chunkArray(JOBS, 2)).resize());
 
             case 'job':
                 if (!JOBS.includes(text)) return ctx.reply('Please select from the buttons.');
                 user.profile.job = text;
                 user.registrationStep = 'purpose';
                 await user.save();
-                return ctx.reply('Why are you here?', Markup.keyboard(PURPOSES).chunk(2).resize());
+                // FIXED: Using chunkArray helper
+                return ctx.reply('Why are you here?', Markup.keyboard(chunkArray(PURPOSES, 2)).resize());
 
             case 'purpose':
                 if (!PURPOSES.includes(text)) return ctx.reply('Please select from the buttons.');
@@ -143,7 +157,6 @@ bot.on(['text', 'photo'], async (ctx, next) => {
 
             case 'photo':
                 if (!ctx.message.photo) return ctx.reply('Please send a photo.');
-                // Get the highest quality photo ID
                 const photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
                 user.profile.photoId = photoId;
                 user.registrationStep = 'completed';
@@ -152,7 +165,6 @@ bot.on(['text', 'photo'], async (ctx, next) => {
         }
     }
 
-    // 3. IF IDLE - Handle Menu Commands
     next();
 });
 
@@ -179,31 +191,26 @@ bot.hears('👤 My Profile', async (ctx) => {
 bot.hears('🎲 Connect to Stranger', async (ctx) => {
     if (ctx.user.status !== 'idle') return ctx.reply('You are already searching or chatting.');
 
-    // 1. Check if there is someone else searching
     const partner = await User.findOne({ 
         status: 'searching', 
-        telegramId: { $ne: ctx.user.telegramId } // Not myself
+        telegramId: { $ne: ctx.user.telegramId } 
     });
 
     if (partner) {
-        // MATCH FOUND!
-        
-        // Update Current User
+        // MATCH FOUND
         ctx.user.status = 'chatting';
         ctx.user.partnerId = partner.telegramId;
         await ctx.user.save();
 
-        // Update Partner
         partner.status = 'chatting';
         partner.partnerId = ctx.user.telegramId;
         await partner.save();
 
-        // Send Profiles to each other
-        await sendMatchMessage(ctx, ctx.user, partner); // Send partner profile to user
-        await sendMatchMessage(ctx, partner, ctx.user); // Send user profile to partner
+        await sendMatchMessage(ctx, ctx.user, partner);
+        await sendMatchMessage(ctx, partner, ctx.user);
         
     } else {
-        // NO MATCH, ADD TO QUEUE
+        // NO MATCH
         ctx.user.status = 'searching';
         await ctx.user.save();
         ctx.reply('🔎 Searching for a user... Please wait.', Markup.keyboard([['❌ Stop Searching']]).resize());
@@ -246,12 +253,9 @@ async function sendMatchMessage(ctx, recipient, profileData) {
 }
 
 async function endChat(userId1, userId2, ctx) {
-    // Reset User 1
     await User.updateOne({ telegramId: userId1 }, { status: 'idle', partnerId: null });
-    // Reset User 2
     await User.updateOne({ telegramId: userId2 }, { status: 'idle', partnerId: null });
 
-    // Notify both
     try {
         await ctx.telegram.sendMessage(userId1, '🚫 Chat ended.', getMainMenu());
         await ctx.telegram.sendMessage(userId2, '🚫 Partner ended the chat.', getMainMenu());
@@ -260,14 +264,17 @@ async function endChat(userId1, userId2, ctx) {
     }
 }
 
-// --- SERVER SETUP (FOR RENDER) ---
-// Render requires a port to be bound to keep the service running
+// --- SERVER SETUP ---
 const app = express();
 app.get('/', (req, res) => res.send('Bot is running!'));
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    // Launch Bot
+    
+    // Stop local instances if any (avoids Conflict error on restart)
+    bot.stop(); 
+    
+    // Start bot
     bot.launch();
     console.log('Bot started');
 });
