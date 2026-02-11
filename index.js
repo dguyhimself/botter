@@ -40,7 +40,7 @@ const PROVINCES = ['Kabul', 'Herat', 'Kandahar', 'Balkh', 'Nangarhar', 'Bamyan',
 const JOBS = ['Worker', 'Personal Business', 'Unemployed', 'Student'];
 const PURPOSES = ['For Fun', 'Finding a Friend', 'Marriage', 'Just Chat'];
 
-// --- HELPER FUNCTION TO CHUNK ARRAYS (Fixes the error) ---
+// --- HELPER FUNCTION TO CHUNK ARRAYS ---
 function chunkArray(arr, size) {
     return Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
         arr.slice(i * size, i * size + size)
@@ -49,7 +49,6 @@ function chunkArray(arr, size) {
 
 // Helper to get Main Menu
 const getMainMenu = () => {
-    // We create a 2D array for the layout
     return Markup.keyboard([
         ['🎲 Connect to Stranger'],
         ['👤 My Profile', '✏️ Edit Profile']
@@ -129,7 +128,6 @@ bot.on(['text', 'photo'], async (ctx, next) => {
                 user.profile.age = text;
                 user.registrationStep = 'province';
                 await user.save();
-                // FIXED: Using chunkArray helper
                 return ctx.reply('Which province are you from?', Markup.keyboard(chunkArray(PROVINCES, 2)).resize());
 
             case 'province':
@@ -137,7 +135,6 @@ bot.on(['text', 'photo'], async (ctx, next) => {
                 user.profile.province = text;
                 user.registrationStep = 'job';
                 await user.save();
-                // FIXED: Using chunkArray helper
                 return ctx.reply('What is your job?', Markup.keyboard(chunkArray(JOBS, 2)).resize());
 
             case 'job':
@@ -145,7 +142,6 @@ bot.on(['text', 'photo'], async (ctx, next) => {
                 user.profile.job = text;
                 user.registrationStep = 'purpose';
                 await user.save();
-                // FIXED: Using chunkArray helper
                 return ctx.reply('Why are you here?', Markup.keyboard(chunkArray(PURPOSES, 2)).resize());
 
             case 'purpose':
@@ -271,11 +267,8 @@ app.get('/', (req, res) => res.send('Bot is running!'));
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     
-    // Stop local instances if any (avoids Conflict error on restart)
-    bot.stop(); 
-    
-    // Start bot
-    bot.launch();
+    // START BOT
+    bot.launch(); 
     console.log('Bot started');
 });
 
