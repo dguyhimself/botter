@@ -1060,7 +1060,7 @@ bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
 async function startSearch(ctx, type) {
     const userId = ctx.from.id;
     
-    // 1. FORCE RELOAD USER (Crucial for Advanced Search to see new filters)
+    // 1. FORCE RELOAD USER (To ensure we have the latest filters/credits)
     const user = await User.findOne({ telegramId: userId });
     const userProfile = user.profile;
 
@@ -1100,21 +1100,22 @@ async function startSearch(ctx, type) {
         blockedUsers: { $ne: userId } 
     };
 
-    // --- BILATERAL MATCHING RULE ---
-    filter.searchGender = { $in: ['all', 'random', 'advanced', myGender] };
-
-    // --- 6. APPLY SEARCH FILTERS ---
+    // --- 6. BILATERAL MATCHING (CRITICAL FIX) ---
     if (type === 'advanced') {
-        // Ensure searchFilters exists
+        // If I am Advanced, I can match with:
+        // 1. Random people ('all', 'random')
+        // 2. Other Advanced people ('advanced')
+        // 3. People looking for my gender specifically
+        filter.searchGender = { $in: ['all', 'random', 'advanced', myGender] };
+        
+        // --- APPLY MY FILTERS (Strictly) ---
         const f = user.searchFilters || {}; 
         
-        // Strict Gender
         if (f.gender && f.gender !== 'all') {
              if (f.gender.includes('پسر')) filter['profile.gender'] = /پسر|boy/i;
              else if (f.gender.includes('دختر')) filter['profile.gender'] = /دختر|girl/i;
         }
         
-        // Use Regex for other fields to handle spaces or slight differences
         if (f.province && f.province !== 'all') {
             filter['profile.province'] = new RegExp(f.province, 'i');
         }
@@ -1122,14 +1123,19 @@ async function startSearch(ctx, type) {
             filter['profile.job'] = new RegExp(f.job, 'i');
         }
         if (f.age && f.age !== 'all') {
-            filter['profile.age'] = f.age; // Age is usually exact
+            filter['profile.age'] = f.age;
         }
         if (f.purpose && f.purpose !== 'all') {
             filter['profile.purpose'] = new RegExp(f.purpose, 'i');
         }
 
     } else {
-        // Simple Search
+        // --- NORMAL SEARCH (Random/Boy/Girl) ---
+        // CRITICAL: We DO NOT include 'advanced' here.
+        // Random searchers cannot "accidentally" pick up an Advanced user waiting in the queue.
+        filter.searchGender = { $in: ['all', 'random', myGender] };
+
+        // Specific Gender Buttons
         if (type === 'boy') filter['profile.gender'] = /پسر|boy/i;
         if (type === 'girl') filter['profile.gender'] = /دختر|girl/i;
     }
@@ -1151,14 +1157,13 @@ async function startSearch(ctx, type) {
     // --- 9. HANDLE RESULT ---
     if (partner) {
         // ✅ MATCH FOUND
-        // Update MY status
         await User.updateOne({ telegramId: userId }, {
             status: 'chatting',
             partnerId: partner.telegramId,
-            searchGender: 'all' // Reset preference
+            searchGender: 'all' // Reset
         });
-
-        // Update ctx.user for immediate use if needed (optional)
+        
+        // Update context
         ctx.user.status = 'chatting';
         ctx.user.partnerId = partner.telegramId;
 
@@ -1179,9 +1184,12 @@ async function startSearch(ctx, type) {
     } else {
         // ⏳ NO MATCH - GO TO WAITING ROOM
         let newSearchGender = type;
+        
+        // Map types to database values
         if (type === 'random') newSearchGender = 'all';
-        // For Advanced, we save 'advanced' so other advanced users can find us, 
-        // AND random users can find us (because of the Bilateral fix above).
+        
+        // If Advanced, we mark ourselves as 'advanced'.
+        // Because of step 6, Random searchers will NOT see us.
         if (type === 'advanced') newSearchGender = 'advanced'; 
 
         await User.updateOne({ telegramId: userId }, {
@@ -1189,12 +1197,12 @@ async function startSearch(ctx, type) {
             searchGender: newSearchGender
         });
 
-        // Update ctx.user memory
+        // Update context
         ctx.user.status = 'searching';
         
         let msg = `${TEXTS.searching}\n`;
         if (type === 'advanced') {
-            msg += `⚙️ در حال جستجو با فیلترهای پیشرفته...`;
+            msg += `⚙️ در حال جستجو با فیلترهای پیشرفته...\n(فقط افرادی که با معیار شما سازگار باشند وصل میشوند)`;
         } else {
             const typeText = (type === 'random' || type === 'all') ? 'شانسی' : (type === 'boy' ? 'پسر' : 'دختر');
             msg += `🔎 فیلتر شما: ${typeText}`;
