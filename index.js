@@ -334,12 +334,18 @@ bot.start(async (ctx) => {
     }, 3000);
 });
 
-bot.on(['text', 'photo'], async (ctx) => {
+// We add sticker, animation (GIFs), video, and voice to the list so the bot detects them
+bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) => {
     const user = ctx.user;
     const text = ctx.message.text || "";
 
     // 1. CHAT MODE
     if (user.status === 'chatting' && user.partnerId) {
+
+        // If it is NOT text and NOT a photo, send a warning and stop.
+        if (!ctx.message.text && !ctx.message.photo) {
+            return ctx.reply('🚫 ارسال استیکر، گیف، ویدیو یا ویس مجاز نیست!\nفقط متن و عکس ارسال کنید.');
+        }
         
         // --- BLOCK ACTION ---
         if (text === '⛔️ بلاک کردن این کاربر') {
