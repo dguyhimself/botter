@@ -1074,7 +1074,6 @@ async function startSearch(ctx, type) {
     if (user.credits < cost) {
         const needed = cost - user.credits;
         
-        // Professional Error Message
         const errorMsg = `⚠️ <b>موجودی کافی نیست!</b>\n\n` +
                          `💎 هزینه این جستجو: <b>${cost}</b> سکه\n` +
                          `💰 موجودی فعلی شما: <b>${user.credits}</b> سکه\n` +
@@ -1085,47 +1084,51 @@ async function startSearch(ctx, type) {
             parse_mode: 'HTML',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: '💳 خرید سکه (فوری)', callback_data: 'show_shop_info' }], // New Buy Button
+                    [{ text: '💳 خرید سکه (فوری)', callback_data: 'show_shop_info' }],
                     [{ text: '🎁 دریافت لینک دعوت (رایگان)', callback_data: 'get_ref_link' }]
                 ]
             }
         });
     }
 
-// --- 3. PREPARE FILTERS (FIXED) ---
-    const myGender = userProfile.gender.includes('پسر') ? 'boy' : 'girl';
+    // --- 3. PREPARE FILTERS (FIXED LOGIC) ---
+    // Robust Gender Check: Ensure we know if I am a boy or girl
+    const myGender = (userProfile.gender && userProfile.gender.includes('دختر')) ? 'girl' : 'boy';
     
-    // We combine checks into ONE telegramId field to prevent overwriting
+    // Base Filter: Not Me, Not Blocked, Not blocked by them
     let filter = { 
         status: 'searching', 
-        telegramId: { $ne: userId, $nin: user.blockedUsers }, // Merged "Not Me" and "Not Blocked"
-        blockedUsers: { $ne: userId } // Ensure they haven't blocked me
+        telegramId: { $ne: userId, $nin: user.blockedUsers }, 
+        blockedUsers: { $ne: userId } 
     };
 
     if (type === 'advanced') {
         const f = user.searchFilters;
+        
+        // Gender Filter (Regex is okay here for "All Boys" etc, but exact is better if possible)
         if (f.gender !== 'all') {
-             if (f.gender.includes('پسر')) filter['profile.gender'] = /پسر/;
-             if (f.gender.includes('دختر')) filter['profile.gender'] = /دختر/;
+             if (f.gender.includes('پسر')) filter['profile.gender'] = GENDERS[0]; // 'پسر 👦'
+             if (f.gender.includes('دختر')) filter['profile.gender'] = GENDERS[1]; // 'دختر 👧'
         }
         if (f.province !== 'all') filter['profile.province'] = f.province;
         if (f.age !== 'all') filter['profile.age'] = f.age;
         if (f.job !== 'all') filter['profile.job'] = f.job;
         if (f.purpose !== 'all') filter['profile.purpose'] = f.purpose;
         
-        // Target must be looking for 'all' OR my gender
-        filter.searchGender = { $in: ['all', myGender] };
+        // Target must be looking for 'all', 'random' (old data), 'advanced', or 'myGender'
+        filter.searchGender = { $in: ['all', 'random', 'advanced', myGender] };
 
     } else {
         const desiredGender = type === 'random' ? 'all' : type;
         
-        // Apply Gender Filter
-        if (desiredGender === 'boy') filter['profile.gender'] = /پسر/;
-        if (desiredGender === 'girl') filter['profile.gender'] = /دختر/;
+        // --- STRICT GENDER FILTER ---
+        // Use Exact String Match from global GENDERS array
+        if (desiredGender === 'boy') filter['profile.gender'] = GENDERS[0]; // Matches 'پسر 👦'
+        if (desiredGender === 'girl') filter['profile.gender'] = GENDERS[1]; // Matches 'دختر 👧'
         
-        // Target must be looking for 'all' OR my gender
-        // (This prevents a Girl looking for a Girl matching with a Boy looking for Random)
-        filter.searchGender = { $in: ['all', myGender] };
+        // --- TARGET PREFERENCE FILTER ---
+        // The partner must be looking for: 'all' (Random), 'random' (Old Data), or 'myGender'
+        filter.searchGender = { $in: ['all', 'random', myGender] };
     }
 
     // --- 4. EXECUTE SEARCH ---
@@ -1135,21 +1138,18 @@ async function startSearch(ctx, type) {
         { new: true }
     );
 
-    // --- 5. DEDUCT CREDITS (Only if we start searching) ---
-    // Note: We deduct even if no match is found instantly (Queue Fee).
-    // If you only want to deduct on successful match, move this inside the 'if (partner)' block.
-    // Standard practice is to deduct for the "Service" of filtering.
+    // --- 5. DEDUCT CREDITS ---
     if (cost > 0) {
         user.credits -= cost;
-        await user.save(); // Save the deduction
+        await user.save();
         await ctx.reply(`💸 مبلغ ${cost} سکه کسر شد.\n💰 باقیمانده: ${user.credits}`);
     }
 
     if (partner) {
-        // ... (Existing Match Logic) ...
+        // --- MATCH FOUND ---
         ctx.user.status = 'chatting'; 
         ctx.user.partnerId = partner.telegramId;
-        ctx.user.searchGender = 'all'; 
+        ctx.user.searchGender = 'all'; // Reset search preference
         await ctx.user.save();
 
         const menu = getChatMenu();
@@ -1167,16 +1167,22 @@ async function startSearch(ctx, type) {
             return endChat(userId, partner.telegramId, ctx);
         }
     } else {
-        // ... (Existing No Match Logic) ...
+        // --- NO MATCH FOUND (SAVE STATUS) ---
         ctx.user.status = 'searching';
-        ctx.user.searchGender = (type === 'advanced') ? 'advanced' : type; 
+        
+        // FIX: Normalize 'random' to 'all' so others can find me
+        const saveType = (type === 'random') ? 'all' : type;
+        // If Advanced, save as 'advanced', otherwise use the type (all/boy/girl)
+        ctx.user.searchGender = (type === 'advanced') ? 'advanced' : saveType;
+        
         await ctx.user.save();
         
         let msg = `${TEXTS.searching}\n`;
         if (type === 'advanced') {
             msg += `⚙️ در حال جستجو با فیلترهای پیشرفته...`;
         } else {
-            const typeText = type === 'all' || type === 'random' ? 'شانسی' : (type === 'boy' ? 'پسر' : 'دختر');
+            // Display text logic
+            const typeText = (type === 'random' || type === 'all') ? 'شانسی' : (type === 'boy' ? 'پسر' : 'دختر');
             msg += `🔎 فیلتر شما: ${typeText}`;
         }
         await ctx.reply(msg, Markup.keyboard([['❌ لغو جستجو']]).resize());
