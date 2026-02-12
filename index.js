@@ -52,6 +52,14 @@ const TEXTS = {
     mute_error: '🤐 شما در حالت سکوت هستید.\n⏳ زمان باقی‌مانده: ', 
     profile_viewed: '👁 یک نفر پروفایل شما را مشاهده کرد.',
     self_vote: '⚠️ نمیتوانید به خودتان رای دهید!',
+
+    btn_settings: '⚙️ تنظیمات', // New Button
+    settings_title: '⚙️ به بخش تنظیمات خوش آمدید.',
+    blocked_list: '🚫 لیست سیاه (کاربران مسدود شده)',
+    blocked_empty: '✅ لیست سیاه شما خالی است.',
+    blocked_count: '👥 تعداد افراد مسدود شده: ',
+    unblock_all_btn: '♻️ حذف همه از لیست سیاه',
+    unblock_done: '✅ تمام کاربران از لیست سیاه خارج شدند.',
     
     // Reporting
     report_btn: '⚠️ گزارش تخلف',
@@ -121,7 +129,13 @@ const chunk = (arr, size) => Array.from({ length: Math.ceil(arr.length / size) }
 
 const getMainMenu = () => Markup.keyboard([
     [TEXTS.btn_connect], 
-    [TEXTS.btn_profile, TEXTS.btn_edit]
+    [TEXTS.btn_profile, TEXTS.btn_edit],
+    [TEXTS.btn_settings] // Added Settings Button
+]).resize();
+
+const getSettingsMenu = () => Markup.keyboard([
+    [TEXTS.blocked_list],
+    [TEXTS.btn_back]
 ]).resize();
 
 const getChatMenu = () => Markup.keyboard([
@@ -165,7 +179,6 @@ bot.use(async (ctx, next) => {
         if (user.banned) return ctx.reply(TEXTS.banned_msg);
 
         // 2. Mute Check
-// 2. Mute Check (Fixed)
         if (user.muteUntil > Date.now()) {
             const remainingMs = user.muteUntil - Date.now();
             const remainingMins = Math.ceil(remainingMs / 60000);
@@ -361,13 +374,25 @@ bot.on(['text', 'photo'], async (ctx) => {
         // Link Block
         if (/(https?:\/\/|t\.me\/|@[\w]+)/gi.test(text)) return ctx.reply(TEXTS.link_blocked);
 
-        // --- CHAT ACTIONS (Typing Indicator) ---
-        // Before sending the message, tell the partner "User is sending photo/text..."
+// --- CHAT ACTIONS (Typing Indicator Fixed) ---
         try {
             const actionType = ctx.message.photo ? 'upload_photo' : 'typing';
+            
+            // 1. Send the "Typing..." status to the partner
             await ctx.telegram.sendChatAction(user.partnerId, actionType);
-        } catch (e) {}
-        // ---------------------------------------
+
+            // 2. If it is TEXT, wait 800ms so the user actually sees "Typing..."
+            // (Photos are naturally slow, so they don't need a delay)
+            if (!ctx.message.photo) {
+                await new Promise(resolve => setTimeout(resolve, 800));
+            }
+
+        } catch (e) {
+            // If partner blocked bot, end chat immediately
+            await endChat(ctx.from.id, user.partnerId, ctx);
+            return;
+        }
+        // ---------------------------------------------
 
         // Forward Message
         try { 
@@ -401,6 +426,26 @@ bot.on(['text', 'photo'], async (ctx) => {
     if (text === TEXTS.btn_edit) return ctx.reply('بخش مورد نظر را انتخاب کنید:', getEditMenu());
     
     if (text === TEXTS.btn_back || text === '🔙 برگشت به منوی اصلی') return ctx.reply(TEXTS.main_menu_title, getMainMenu());
+
+    // --- NEW SETTINGS LOGIC ---
+    if (text === TEXTS.btn_settings) {
+        return ctx.reply(TEXTS.settings_title, getSettingsMenu());
+    }
+
+    if (text === TEXTS.blocked_list) {
+        const count = user.blockedUsers.length;
+        if (count === 0) {
+            return ctx.reply(TEXTS.blocked_empty);
+        } else {
+            // Show count and an Inline Button to Unblock All
+            return ctx.reply(
+                `${TEXTS.blocked_count} ${count} نفر`, 
+                Markup.inlineKeyboard([
+                    [Markup.button.callback(TEXTS.unblock_all_btn, 'action_unblock_all')]
+                ])
+            );
+        }
+    }
     
     // Search Actions
     if (text === '🎲 جستجو شانسی') return startSearch(ctx, 'random');
@@ -454,6 +499,19 @@ bot.on(['text', 'photo'], async (ctx) => {
             await ctx.reply(prompts[foundKey], keyboard);
             return;
         }
+    }
+});
+
+// --- UNBLOCK ACTION ---
+bot.action('action_unblock_all', async (ctx) => {
+    try {
+        // Clear the array
+        await User.updateOne({ telegramId: ctx.from.id }, { blockedUsers: [] });
+        
+        await ctx.answerCbQuery('انجام شد');
+        await ctx.editMessageText(TEXTS.unblock_done);
+    } catch (e) {
+        console.error(e);
     }
 });
 
