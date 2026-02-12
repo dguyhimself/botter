@@ -57,6 +57,16 @@ const TEXTS = {
     profile_viewed: '👁 یک نفر پروفایل شما را مشاهده کرد.',
     self_vote: '⚠️ نمیتوانید به خودتان رای دهید!',
 
+    // Credits & Referral
+    credit_balance: '💰 موجودی سکه: ',
+    low_credit: '⚠️ موجودی سکه شما کافی نیست!',
+    low_credit_msg: 'برای این جستجو نیاز به سکه دارید.\n\n👇 از دکمه زیر لینک دعوت خود را بگیرید و دوستانتان را دعوت کنید تا سکه رایگان بگیرید.',
+    referral_title: '💰 کسب درآمد (سکه رایگان)',
+    referral_desc: '🎁 با دعوت هر دوست، ۵ سکه دریافت کنید!\n\n🔗 لینک اختصاصی شما:',
+    referral_reward: '🎉 تبریک! یکی از دوستان شما عضو شد و ۵ سکه دریافت کردید.',
+    
+    btn_get_credits: '💰 دریافت سکه رایگان', // Add to Main Menu
+
     btn_settings: '⚙️ تنظیمات', // New Button
     settings_title: '⚙️ به بخش تنظیمات خوش آمدید.',
     blocked_list: '🚫 لیست سیاه (کاربران مسدود شده)',
@@ -136,6 +146,10 @@ const userSchema = new mongoose.Schema({
         purpose: { type: String, default: 'all' }
     },
     // ---------------------------------------
+    // --- NEW CREDIT SYSTEM ---
+    credits: { type: Number, default: 0 }, // Default is 0
+    invitedBy: { type: Number }, // To track referrals
+    // -------------------------
     stats: { likes: { type: Number, default: 0 }, dislikes: { type: Number, default: 0 } },
     blockedUsers: { type: [Number], default: [] },
     status: { type: String, default: 'idle' },
@@ -157,7 +171,7 @@ const chunk = (arr, size) => Array.from({ length: Math.ceil(arr.length / size) }
 const getMainMenu = () => Markup.keyboard([
     [TEXTS.btn_connect], 
     [TEXTS.btn_profile, TEXTS.btn_edit],
-    [TEXTS.btn_settings] // Added Settings Button
+    [TEXTS.btn_get_credits, TEXTS.btn_settings] // Added Get Credits Button
 ]).resize();
 
 const getSettingsMenu = () => Markup.keyboard([
@@ -341,17 +355,45 @@ bot.command('broadcast', async (ctx) => {
     ctx.reply(`✅ پیام به ${count} نفر ارسال شد.`);
 });
 
-// --- MAIN LOGIC ---
 bot.start(async (ctx) => {
-    // If user is already registered, show main menu
-    if (ctx.user.regStep === 'completed') {
+    // 1. Check if user exists
+    let user = await User.findOne({ telegramId: ctx.from.id });
+    
+    // 2. If NEW USER, handle Referral
+    if (!user) {
+        const referrerId = parseInt(ctx.startPayload); // Gets the ID from t.me/bot?start=12345
+        
+        user = new User({ 
+            telegramId: ctx.from.id, 
+            regStep: 'intro',
+            invitedBy: referrerId || null 
+        });
+        await user.save();
+
+        // Award the Referrer (if valid)
+        if (referrerId && referrerId !== ctx.from.id) {
+            const referrer = await User.findOne({ telegramId: referrerId });
+            if (referrer) {
+                referrer.credits += 5; // +5 Credits Reward
+                await referrer.save();
+                // Notify Referrer
+                try {
+                    await ctx.telegram.sendMessage(referrerId, `${TEXTS.referral_reward}\n💰 موجودی جدید: ${referrer.credits}`);
+                } catch (e) {}
+            }
+        }
+    }
+
+    // 3. Normal Start Flow
+    if (user.regStep === 'completed') {
         return ctx.reply(TEXTS.main_menu_title, getMainMenu());
     }
 
-    // Otherwise, start registration
+    // Start Registration
+    ctx.user = user; // Ensure ctx.user is set
     ctx.user.regStep = 'intro'; await ctx.user.save();
+    
     const m = await ctx.reply(TEXTS.intro);
-    ctx.user.lastMsgId = m.message_id; await ctx.user.save();
     
     setTimeout(async () => {
         await cleanPrev(ctx);
@@ -402,6 +444,12 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
                 [Markup.button.callback('بی‌ادبی', `rep_rude_${user.partnerId}`)],
                 [Markup.button.callback('کلاهبرداری', `rep_scam_${user.partnerId}`)]
             ]));
+        }
+
+        // --- REFERRAL LINK GENERATOR ---
+        if (text === TEXTS.btn_get_credits) {
+            const link = `https://t.me/${ctx.botInfo.username}?start=${user.telegramId}`;
+            return ctx.reply(`${TEXTS.referral_desc}\n\n${link}`);
         }
         
         // Link Block
@@ -465,9 +513,9 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
     // 3. MENUS
     if (text === TEXTS.btn_connect) {
         return ctx.reply(TEXTS.search_menu_title, Markup.keyboard([
-            ['🎲 جستجو شانسی'], 
-            ['👦 جستجو پسر', '👩 جستجو دختر'], 
-            [TEXTS.btn_advanced], 
+            ['🎲 جستجو شانسی (رایگان)'], 
+            ['👦 جستجو پسر (۲ سکه)', '👩 جستجو دختر (۲ سکه)'], 
+            ['🔍 جستجو پیشرفته (۱۰ سکه)'], 
             [TEXTS.btn_back]
         ]).resize());
     }
@@ -502,11 +550,11 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
         }
     }
     
-    // Search Actions
-    if (text === '🎲 جستجو شانسی') return startSearch(ctx, 'random');
-    if (text === '👦 جستجو پسر') return startSearch(ctx, 'boy');
-    if (text === '👩 جستجو دختر') return startSearch(ctx, 'girl');
-    if (text === '❌ لغو جستجو') return stopSearch(ctx);
+// Search Actions (Updated with Persian Text & Costs)
+    if (text === '🎲 جستجو شانسی (رایگان)') return startSearch(ctx, 'random');
+    if (text === '👦 جستجو پسر (۲ سکه)') return startSearch(ctx, 'boy');
+    if (text === '👩 جستجو دختر (۲ سکه)') return startSearch(ctx, 'girl');
+    if (text === '🔍 جستجو پیشرفته (۱۰ سکه)') return showAdvancedMenu(ctx); // Show menu first
 
     // EDIT TRIGGER
     if (text && text.startsWith('✏️')) {
@@ -568,6 +616,11 @@ bot.action('action_unblock_all', async (ctx) => {
     } catch (e) {
         console.error(e);
     }
+});
+bot.action('get_ref_link', async (ctx) => {
+    const link = `https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}`;
+    await ctx.reply(`${TEXTS.referral_desc}\n\n${link}`);
+    await ctx.answerCbQuery();
 });
 // --- ICEBREAKER ACTION ---
 bot.action('action_icebreaker', async (ctx) => {
@@ -747,6 +800,7 @@ async function showProfile(ctx, targetUser, isSelf) {
     // <b>Text</b> makes it Bold
     // <code>123</code> makes it Monospace (Copyable on click)
     const caption = `🎫 <b>پروفایل کاربری</b>\n\n` +
+                    `💰 <b>سکه:</b> ${targetUser.credits}\n` + // <--- NEW LINE
                     `👤 <b>نام:</b> ${safeName}\n` +
                     `🎂 <b>سن:</b> ${p.age || '?'}\n` +
                     `🚻 <b>جنسیت:</b> ${p.gender || '?'}\n\n` +
@@ -883,26 +937,34 @@ bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
 
 async function startSearch(ctx, type) {
     const userId = ctx.from.id;
-    const userProfile = ctx.user.profile;
-    
-    // 1. Determine My Gender for matching
+    const user = ctx.user; // Uses the middleware loaded user
+    const userProfile = user.profile;
+
+    // --- 1. DETERMINE COST ---
+    let cost = 0;
+    if (type === 'boy' || type === 'girl') cost = 2;
+    if (type === 'advanced') cost = 10;
+
+    // --- 2. CHECK BALANCE ---
+    if (user.credits < cost) {
+        return ctx.reply(TEXTS.low_credit_msg, Markup.inlineKeyboard([
+            [Markup.button.callback('💰 دریافت لینک دعوت', 'get_ref_link')]
+        ]));
+    }
+
+    // --- 3. PREPARE FILTERS (Existing Logic) ---
     const myGender = userProfile.gender.includes('پسر') ? 'boy' : 'girl';
     
-    // 2. Build Query
     let filter = { 
         status: 'searching', 
         telegramId: { $ne: userId },
-        telegramId: { $nin: ctx.user.blockedUsers },
+        telegramId: { $nin: user.blockedUsers },
         blockedUsers: { $ne: userId }
     };
 
-    // --- HANDLE FILTERS ---
     if (type === 'advanced') {
-        const f = ctx.user.searchFilters;
-
-        // Exact Match Filters (only if not 'all')
+        const f = user.searchFilters;
         if (f.gender !== 'all') {
-             // If searching for Boy, look for 'پسر', if Girl look for 'دختر'
              if (f.gender.includes('پسر')) filter['profile.gender'] = /پسر/;
              if (f.gender.includes('دختر')) filter['profile.gender'] = /دختر/;
         }
@@ -910,43 +972,45 @@ async function startSearch(ctx, type) {
         if (f.age !== 'all') filter['profile.age'] = f.age;
         if (f.job !== 'all') filter['profile.job'] = f.job;
         if (f.purpose !== 'all') filter['profile.purpose'] = f.purpose;
-
-        // Reciprocity: The other person must be looking for 'all' OR someone like me
-        // (For now in advanced mode, we assume they accept 'all' or match specific gender logic)
         filter.searchGender = { $in: ['all', myGender] };
 
     } else {
-        // --- CLASSIC SIMPLE SEARCH ---
         const desiredGender = type === 'random' ? 'all' : type;
         if (desiredGender === 'boy') filter['profile.gender'] = /پسر/;
         if (desiredGender === 'girl') filter['profile.gender'] = /دختر/;
-        
         filter.searchGender = { $in: ['all', myGender] };
     }
 
-    // 3. Exec Query
+    // --- 4. EXECUTE SEARCH ---
     const partner = await User.findOneAndUpdate(
         filter, 
         { status: 'chatting', partnerId: userId }, 
         { new: true }
     );
 
+    // --- 5. DEDUCT CREDITS (Only if we start searching) ---
+    // Note: We deduct even if no match is found instantly (Queue Fee).
+    // If you only want to deduct on successful match, move this inside the 'if (partner)' block.
+    // Standard practice is to deduct for the "Service" of filtering.
+    if (cost > 0) {
+        user.credits -= cost;
+        await user.save(); // Save the deduction
+        await ctx.reply(`💸 مبلغ ${cost} سکه کسر شد.\n💰 باقیمانده: ${user.credits}`);
+    }
+
     if (partner) {
-        // --- MATCH FOUND ---
+        // ... (Existing Match Logic) ...
         ctx.user.status = 'chatting'; 
         ctx.user.partnerId = partner.telegramId;
-        ctx.user.searchGender = 'all'; // Reset basic search
+        ctx.user.searchGender = 'all'; 
         await ctx.user.save();
 
         const menu = getChatMenu();
-        
-        // Notify Me
         await ctx.telegram.sendMessage(userId, TEXTS.connected, menu);
         await ctx.telegram.sendMessage(userId, '🗣 نمیدانی چی بگویی؟', Markup.inlineKeyboard([
             Markup.button.callback('🎲 یک سوال پیشنهاد بده', 'action_icebreaker')
         ]));
 
-        // Notify Partner
         try {
             await ctx.telegram.sendMessage(partner.telegramId, TEXTS.connected, menu);
             await ctx.telegram.sendMessage(partner.telegramId, '🗣 نمیدانی چی بگویی؟', Markup.inlineKeyboard([
@@ -956,9 +1020,8 @@ async function startSearch(ctx, type) {
             return endChat(userId, partner.telegramId, ctx);
         }
     } else {
-        // --- NO MATCH FOUND ---
+        // ... (Existing No Match Logic) ...
         ctx.user.status = 'searching';
-        // If advanced, we just say 'advanced', otherwise save the gender preference
         ctx.user.searchGender = (type === 'advanced') ? 'advanced' : type; 
         await ctx.user.save();
         
@@ -969,7 +1032,6 @@ async function startSearch(ctx, type) {
             const typeText = type === 'all' || type === 'random' ? 'شانسی' : (type === 'boy' ? 'پسر' : 'دختر');
             msg += `🔎 فیلتر شما: ${typeText}`;
         }
-        
         await ctx.reply(msg, Markup.keyboard([['❌ لغو جستجو']]).resize());
     }
 }
