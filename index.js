@@ -412,6 +412,14 @@ bot.start(async (ctx) => {
     // 1. Check if user exists
     let user = await User.findOne({ telegramId: ctx.from.id });
     
+    // --- FIX: RESET STATUS ON START ---
+    if (user && user.status === 'searching') {
+        user.status = 'idle';
+        user.searchGender = null;
+        await user.save();
+        await ctx.reply(TEXTS.search_stopped); // Optional: Tell them search stopped
+    }
+    
     // 2. If NEW USER, handle Referral
     if (!user) {
         const referrerId = parseInt(ctx.startPayload); // Gets the ID from t.me/bot?start=12345
@@ -614,6 +622,7 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
     }
     
 // Search Actions (Updated with Persian Text & Costs)
+    if (text === '❌ لغو جستجو') return stopSearch(ctx); // <--- ADD THIS LINE
     if (text === '🎲 جستجو شانسی') return startSearch(ctx, 'random');
     if (text === '👦 جستجو پسر') return startSearch(ctx, 'boy');
     if (text === '👩 جستجو دختر') return startSearch(ctx, 'girl');
@@ -1083,14 +1092,14 @@ async function startSearch(ctx, type) {
         });
     }
 
-    // --- 3. PREPARE FILTERS (Existing Logic) ---
+// --- 3. PREPARE FILTERS (FIXED) ---
     const myGender = userProfile.gender.includes('پسر') ? 'boy' : 'girl';
     
+    // We combine checks into ONE telegramId field to prevent overwriting
     let filter = { 
         status: 'searching', 
-        telegramId: { $ne: userId },
-        telegramId: { $nin: user.blockedUsers },
-        blockedUsers: { $ne: userId }
+        telegramId: { $ne: userId, $nin: user.blockedUsers }, // Merged "Not Me" and "Not Blocked"
+        blockedUsers: { $ne: userId } // Ensure they haven't blocked me
     };
 
     if (type === 'advanced') {
@@ -1103,12 +1112,19 @@ async function startSearch(ctx, type) {
         if (f.age !== 'all') filter['profile.age'] = f.age;
         if (f.job !== 'all') filter['profile.job'] = f.job;
         if (f.purpose !== 'all') filter['profile.purpose'] = f.purpose;
+        
+        // Target must be looking for 'all' OR my gender
         filter.searchGender = { $in: ['all', myGender] };
 
     } else {
         const desiredGender = type === 'random' ? 'all' : type;
+        
+        // Apply Gender Filter
         if (desiredGender === 'boy') filter['profile.gender'] = /پسر/;
         if (desiredGender === 'girl') filter['profile.gender'] = /دختر/;
+        
+        // Target must be looking for 'all' OR my gender
+        // (This prevents a Girl looking for a Girl matching with a Boy looking for Random)
         filter.searchGender = { $in: ['all', myGender] };
     }
 
@@ -1167,9 +1183,15 @@ async function startSearch(ctx, type) {
     }
 }
 async function stopSearch(ctx) { 
-    if (ctx.user.status === 'chatting') return; // Should use disconnect button
+    // If they are actually chatting, "Stop Search" shouldn't work (they should use Disconnect)
+    if (ctx.user.status === 'chatting') {
+        return ctx.reply('⛔️ شما در حال مکالمه هستید. از دکمه "قطع مکالمه" استفاده کنید.');
+    }
+
     ctx.user.status = 'idle'; 
+    ctx.user.searchGender = null; // Clear their filter preference
     await ctx.user.save(); 
+    
     await ctx.reply(TEXTS.search_stopped, getMainMenu()); 
 }
 
