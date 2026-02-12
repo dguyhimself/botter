@@ -62,7 +62,18 @@ const AGES = Array.from({ length: 66 }, (_, i) => (i + 15).toString());
 
 // --- DATABASE ---
 mongoose.connect(MONGO_URI)
-    .then(() => console.log('✅ DB Connected'))
+    .then(async () => {
+        console.log('✅ DB Connected');
+        
+        // --- FIX FOR E11000 ERROR ---
+        try {
+            // This forces MongoDB to delete the old, conflicting index causing the crash
+            await mongoose.connection.collection('users').dropIndex('botUserId_1');
+            console.log('🗑️ Fixed: Deleted old/bad database index "botUserId_1"');
+        } catch (e) {
+            // If the index is already gone, ignore this error
+        }
+    })
     .catch(e => console.error('❌ DB Error:', e));
 
 const userSchema = new mongoose.Schema({
