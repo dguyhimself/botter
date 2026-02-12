@@ -459,10 +459,14 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
         return ctx.reply(TEXTS.search_menu_title, Markup.keyboard([
             ['🎲 جستجو شانسی'], 
             ['👦 جستجو پسر', '👩 جستجو دختر'], 
-            [TEXTS.btn_advanced], // <--- NEW BUTTON
+            [TEXTS.btn_advanced], 
             [TEXTS.btn_back]
         ]).resize());
     }
+
+    // --- ADD THIS LINE HERE ---
+    if (text === TEXTS.btn_advanced) return showAdvancedMenu(ctx);
+    // --------------------------
 
     if (text === TEXTS.btn_profile) return showProfile(ctx, user, true);
     
@@ -805,9 +809,6 @@ async function showAdvancedMenu(ctx) {
         await ctx.reply(status, { parse_mode: 'HTML', reply_markup: kb.reply_markup });
     }
 }
-
-// 1. Enter the Menu
-bot.hears(TEXTS.btn_advanced, (ctx) => showAdvancedMenu(ctx));
 
 // 2. Handle "Change..." clicks
 bot.action(/^set_filter_(.*)$/, async (ctx) => {
