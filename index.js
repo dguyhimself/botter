@@ -57,7 +57,7 @@ const TEXTS = {
     profile_viewed: '👁 یک نفر پروفایل شما را مشاهده کرد.',
     self_vote: '⚠️ نمیتوانید به خودتان رای دهید!',
 
-    // Credits & Referral
+// Credits & Referral
     credit_balance: '💰 موجودی سکه: ',
     low_credit: '⚠️ موجودی سکه شما کافی نیست!',
     low_credit_msg: 'برای این جستجو نیاز به سکه دارید.\n\n👇 از دکمه زیر لینک دعوت خود را بگیرید و دوستانتان را دعوت کنید تا سکه رایگان بگیرید.',
@@ -65,7 +65,15 @@ const TEXTS = {
     referral_desc: '🎁 با دعوت هر دوست، ۵ سکه دریافت کنید!\n\n🔗 لینک اختصاصی شما:',
     referral_reward: '🎉 تبریک! یکی از دوستان شما عضو شد و ۵ سکه دریافت کردید.',
     
-    btn_get_credits: '💰 دریافت سکه رایگان', // Add to Main Menu
+    // --- UPDATED SHOP TEXTS ---
+    btn_shop: '💰 فروشگاه / دریافت سکه', // New Button Name
+    shop_msg: `💎 <b>فروشگاه سکه</b>\n\n` +
+              `👇 <b>تعرفه بسته‌های سکه:</b>\n\n` +
+              `🥉 <b>۵۰ سکه</b> = ۵۰ افغانی\n` +
+              `🥈 <b>۱۲۰ سکه</b> = ۱۰۰ افغانی\n` +
+              `🥇 <b>۳۰۰ سکه</b> = ۲۰۰ افغانی\n\n` +
+              `💳 برای خرید، روی دکمه "ارتباط با ادمین" کلیک کنید.\n` +
+              `🎁 همچنین میتوانید با دعوت دوستان، سکه رایگان بگیرید.`,
 
     btn_settings: '⚙️ تنظیمات', // New Button
     settings_title: '⚙️ به بخش تنظیمات خوش آمدید.',
@@ -171,7 +179,7 @@ const chunk = (arr, size) => Array.from({ length: Math.ceil(arr.length / size) }
 const getMainMenu = () => Markup.keyboard([
     [TEXTS.btn_connect], 
     [TEXTS.btn_profile, TEXTS.btn_edit],
-    [TEXTS.btn_get_credits, TEXTS.btn_settings] // Added Get Credits Button
+    [TEXTS.btn_shop, TEXTS.btn_settings] // Changed to btn_shop
 ]).resize();
 
 const getSettingsMenu = () => Markup.keyboard([
@@ -446,10 +454,22 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
             ]));
         }
 
-        // --- REFERRAL LINK GENERATOR ---
-        if (text === TEXTS.btn_get_credits) {
-            const link = `https://t.me/${ctx.botInfo.username}?start=${user.telegramId}`;
-            return ctx.reply(`${TEXTS.referral_desc}\n\n${link}`);
+    // --- COIN SHOP & REFERRAL ---
+        if (text === TEXTS.btn_shop) {
+            // REPLACE 'ADMIN_USERNAME' WITH YOUR REAL TELEGRAM USERNAME (WITHOUT @)
+            const adminUser = 'dguyhimself'; 
+            
+            return ctx.reply(TEXTS.shop_msg, {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: [
+                        // Button to DM Admin
+                        [{ text: '👤 ارتباط با ادمین (خرید)', url: `https://t.me/${adminUser}` }],
+                        // Button to get Free Link
+                        [{ text: '🎁 دریافت لینک دعوت (رایگان)', callback_data: 'get_ref_link' }]
+                    ]
+                }
+            });
         }
         
         // Link Block
