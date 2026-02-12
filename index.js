@@ -99,6 +99,8 @@ const userSchema = new mongoose.Schema({
     searchGender: { type: String, default: 'all' }, // Stores: 'all', 'boy', 'girl'
     // ---------------------------
     stats: { likes: { type: Number, default: 0 }, dislikes: { type: Number, default: 0 } },
+        // --- NEW FIELD ---
+    blockedUsers: { type: [Number], default: [] }, // Stores IDs of people I blocked
     status: { type: String, default: 'idle' },
     partnerId: Number,
     lastMsgId: Number,
@@ -124,7 +126,7 @@ const getMainMenu = () => Markup.keyboard([
 
 const getChatMenu = () => Markup.keyboard([
     ['🚫 قطع مکالمه', '📄 مشاهده پروفایل'], 
-    [TEXTS.report_btn]
+    ['⛔️ بلاک کردن این کاربر', TEXTS.report_btn] // Added Block Button
 ]).resize();
 
 const getEditMenu = () => Markup.keyboard([
@@ -325,6 +327,20 @@ bot.on(['text', 'photo'], async (ctx) => {
 
     // 1. CHAT MODE
     if (user.status === 'chatting' && user.partnerId) {
+        
+        // --- BLOCK ACTION ---
+        if (text === '⛔️ مسدود کردن این کاربر') {
+            // Add partner ID to my blocked list
+            user.blockedUsers.push(user.partnerId);
+            await user.save();
+            
+            await ctx.reply(`✅ کاربر مسدود شد. دیگر با این شخص وصل نخواهید شد.`);
+            
+            // End the chat
+            return endChat(ctx.from.id, user.partnerId, ctx);
+        }
+        // --------------------
+
         if (text === '🚫 قطع مکالمه') return endChat(ctx.from.id, user.partnerId, ctx);
         
         if (text === '📄 مشاهده پروفایل') {
@@ -332,9 +348,9 @@ bot.on(['text', 'photo'], async (ctx) => {
             return showProfile(ctx, partner, false);
         }
         
-        // REPORT TRIGGER
+        // REPORT TRIGGER (Keep your existing report code here)
         if (text === TEXTS.report_btn) {
-            return ctx.reply(TEXTS.report_ask, Markup.inlineKeyboard([
+             return ctx.reply(TEXTS.report_ask, Markup.inlineKeyboard([
                 [Markup.button.callback('مزاحمت', `rep_harass_${user.partnerId}`)],
                 [Markup.button.callback('تبلیغات', `rep_spam_${user.partnerId}`)],
                 [Markup.button.callback('بی‌ادبی', `rep_rude_${user.partnerId}`)],
@@ -345,10 +361,17 @@ bot.on(['text', 'photo'], async (ctx) => {
         // Link Block
         if (/(https?:\/\/|t\.me\/|@[\w]+)/gi.test(text)) return ctx.reply(TEXTS.link_blocked);
 
-        // Forward Message and Capture ID for Evidence
+        // --- CHAT ACTIONS (Typing Indicator) ---
+        // Before sending the message, tell the partner "User is sending photo/text..."
+        try {
+            const actionType = ctx.message.photo ? 'upload_photo' : 'typing';
+            await ctx.telegram.sendChatAction(user.partnerId, actionType);
+        } catch (e) {}
+        // ---------------------------------------
+
+        // Forward Message
         try { 
             const sentMsg = await ctx.copyMessage(user.partnerId); 
-            // Save this message ID in the Partner's database so they can report it later
             await User.updateOne({ telegramId: user.partnerId }, { lastReceivedMsgId: sentMsg.message_id });
         } catch (e) { 
             await endChat(ctx.from.id, user.partnerId, ctx); 
@@ -676,9 +699,18 @@ async function startSearch(ctx, type) {
     // C. Matches the gender I want (if I chose boy/girl)
     // D. Is looking for MY gender (or looking for anyone)
     
+// 3. Build the Database Query
     let filter = { 
         status: 'searching', 
-        telegramId: { $ne: userId } 
+        telegramId: { $ne: userId }, // Not me
+        
+        // --- NEW FILTERS ---
+        // 1. They are NOT in my blocked list
+        telegramId: { $nin: ctx.user.blockedUsers },
+        
+        // 2. I am NOT in their blocked list
+        blockedUsers: { $ne: userId } 
+        // ------------------
     };
     
     // Constraint C: Gender I want
