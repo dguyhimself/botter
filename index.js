@@ -567,14 +567,15 @@ async function stepHandler(ctx) {
     }
 }
 
-// --- PROFILE HANDLER (Fixed Buttons) ---
+// --- PROFILE HANDLER (Added User ID) ---
 async function showProfile(ctx, targetUser, isSelf) {
     if (!targetUser) return ctx.reply('کاربر یافت نشد.');
     
     const p = targetUser.profile;
     
-    // 1. Build Caption (Removed the text line showing likes/dislikes)
+    // 1. Build Caption (Added User ID line)
     const caption = `🎫 پروفایل کاربری\n\n` +
+                    `🆔 آیدی: ${targetUser.telegramId}\n` +
                     `👤 نام: ${targetUser.displayName || 'نامشخص'}\n` +
                     `🚻 جنسیت: ${p.gender || '?'}\n` +
                     `🎂 سن: ${p.age || '?'}\n` +
@@ -582,19 +583,24 @@ async function showProfile(ctx, targetUser, isSelf) {
                     `💼 شغل: ${p.job || '?'}\n` +
                     `🎯 هدف: ${p.purpose || '?'}`;
 
-    // 2. Build Buttons with Numbers inside them
-    const buttons = Markup.inlineKeyboard([
-        [
-            Markup.button.callback(`👍 ${targetUser.stats.likes}`, `like_${targetUser.telegramId}`),
-            Markup.button.callback(`👎 ${targetUser.stats.dislikes}`, `dislike_${targetUser.telegramId}`)
-        ]
-    ]);
+    // 2. Build Buttons (Dynamic Numbers)
+    const buttons = {
+        inline_keyboard: [[
+            { text: `👍 ${targetUser.stats.likes}`, callback_data: `like_${targetUser.telegramId}` },
+            { text: `👎 ${targetUser.stats.dislikes}`, callback_data: `dislike_${targetUser.telegramId}` }
+        ]]
+    };
 
     // 3. Send Message
-    if (p.photoId) {
-        await ctx.replyWithPhoto(p.photoId, { caption, reply_markup: buttons.reply_markup });
-    } else {
-        await ctx.reply(caption, buttons);
+    try {
+        if (p.photoId) {
+            await ctx.replyWithPhoto(p.photoId, { caption, reply_markup: buttons });
+        } else {
+            await ctx.reply(caption, { reply_markup: buttons });
+        }
+    } catch (e) {
+        console.error('Error sending profile:', e);
+        ctx.reply('خطا در نمایش پروفایل.');
     }
 
     // 4. Notify if viewed by someone else
@@ -604,7 +610,6 @@ async function showProfile(ctx, targetUser, isSelf) {
         } catch (e) {}
     }
 }
-
 // --- VOTE ACTION (Updates Buttons Dynamically) ---
 bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
     const type = ctx.match[1];
