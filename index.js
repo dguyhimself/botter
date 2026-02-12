@@ -593,7 +593,7 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
             parse_mode: 'HTML',
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: '👤 ارتباط با ادمین (خرید)', url: `https://t.me/${adminUser}` }],
+                    [{ text: '👤 ارتباط با ادمین (خرید فوری)', url: `https://t.me/${adminUser}` }],
                     [{ text: '🎁 دریافت لینک دعوت (رایگان)', callback_data: 'get_ref_link' }]
                 ]
             }
