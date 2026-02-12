@@ -135,7 +135,7 @@ mongoose.connect(MONGO_URI)
 const userSchema = new mongoose.Schema({
     telegramId: { type: Number, required: true, unique: true },
     displayName: String,
-    regStep: { type: String, default: 'intro' }, // Used for Reg AND Search Filters
+    regStep: { type: String, default: 'intro' },
     isEditing: { type: Boolean, default: false },
     profile: { 
         gender: String, 
@@ -145,7 +145,6 @@ const userSchema = new mongoose.Schema({
         purpose: String, 
         photoId: String 
     },
-    // --- NEW FIELD: STORE SEARCH FILTERS ---
     searchFilters: {
         gender: { type: String, default: 'all' },
         province: { type: String, default: 'all' },
@@ -153,11 +152,9 @@ const userSchema = new mongoose.Schema({
         job: { type: String, default: 'all' },
         purpose: { type: String, default: 'all' }
     },
-    // ---------------------------------------
-    // --- NEW CREDIT SYSTEM ---
-    credits: { type: Number, default: 0 }, // Default is 0
-    invitedBy: { type: Number }, // To track referrals
-    // -------------------------
+    searchGender: { type: String, default: 'all' }, // <--- ADD THIS LINE HERE
+    credits: { type: Number, default: 0 },
+    invitedBy: { type: Number },
     stats: { likes: { type: Number, default: 0 }, dislikes: { type: Number, default: 0 } },
     blockedUsers: { type: [Number], default: [] },
     status: { type: String, default: 'idle' },
@@ -1090,34 +1087,32 @@ async function startSearch(ctx, type) {
         });
     }
 
-    // --- 3. DETERMINE MY GENDER (ROBUST) ---
-    // Checks if I am a girl. Defaults to boy if undefined.
+    // --- 3. DETERMINE MY GENDER ---
+    // Safely check if I am a girl. If not, assume boy.
     const isGirl = userProfile.gender && (userProfile.gender.includes('دختر') || userProfile.gender.toLowerCase().includes('girl'));
     const myGender = isGirl ? 'girl' : 'boy';
 
     // --- 4. PREPARE FILTER ---
-    // We are looking for someone who is:
-    // 1. Waiting ('searching')
-    // 2. Not ME
-    // 3. Not in my block list
-    // 4. Has not blocked ME
+    // We look for someone waiting ('searching') who is NOT me and NOT blocked.
     let filter = { 
         status: 'searching', 
         telegramId: { $ne: userId, $nin: user.blockedUsers }, 
         blockedUsers: { $ne: userId } 
     };
 
-    // --- BILATERAL MATCHING RULE ---
-    // We only want to match with people who are looking for ME.
-    // They must be looking for: 'all', 'random', OR specifically my gender.
-    // We also allow 'advanced' users to find us (assuming we match their filters).
+    // --- BILATERAL MATCHING RULE (The Fix) ---
+    // We only connect if the OTHER person is looking for:
+    // 1. 'all' (Random)
+    // 2. 'random' (Legacy Random)
+    // 3. 'advanced' (Advanced Searchers)
+    // 4. OR specifically MY gender ('boy' if I am boy, 'girl' if I am girl)
     filter.searchGender = { $in: ['all', 'random', 'advanced', myGender] };
 
-    // --- 5. APPLY SPECIFIC USER FILTERS ---
+    // --- 5. APPLY MY SEARCH FILTERS ---
     if (type === 'advanced') {
         const f = user.searchFilters;
         
-        // Strict Gender Logic for Advanced
+        // Strict Gender Logic
         if (f.gender && f.gender !== 'all') {
              if (f.gender.includes('پسر')) filter['profile.gender'] = /پسر|boy/i;
              else if (f.gender.includes('دختر')) filter['profile.gender'] = /دختر|girl/i;
@@ -1129,17 +1124,16 @@ async function startSearch(ctx, type) {
         if (f.purpose && f.purpose !== 'all') filter['profile.purpose'] = f.purpose;
 
     } else {
-        // Specific Gender Search (Boy/Girl Buttons)
+        // Specific Gender Buttons
         if (type === 'boy') {
-            filter['profile.gender'] = /پسر|boy/i; // MUST match Boy
+            filter['profile.gender'] = /پسر|boy/i; // MUST be a Boy
         } else if (type === 'girl') {
-            filter['profile.gender'] = /دختر|girl/i; // MUST match Girl
+            filter['profile.gender'] = /دختر|girl/i; // MUST be a Girl
         }
-        // If type is 'random', we don't add a profile.gender filter (anyone is fine)
+        // If 'random', we don't add profile filters
     }
 
     // --- 6. EXECUTE SEARCH ---
-    // Find one partner matching the strict criteria
     const partner = await User.findOneAndUpdate(
         filter, 
         { status: 'chatting', partnerId: userId }, 
@@ -1158,7 +1152,7 @@ async function startSearch(ctx, type) {
         // ✅ MATCH FOUND
         ctx.user.status = 'chatting'; 
         ctx.user.partnerId = partner.telegramId;
-        ctx.user.searchGender = 'all'; // Reset my search preference
+        ctx.user.searchGender = 'all'; // Reset my preference
         await ctx.user.save();
 
         const menu = getChatMenu();
@@ -1180,11 +1174,8 @@ async function startSearch(ctx, type) {
         // ⏳ NO MATCH - GO TO WAITING ROOM
         ctx.user.status = 'searching';
         
-        // IMPORTANT: Set what WE are looking for so others can find/avoid us correctly.
+        // IMPORTANT: Save EXACTLY what we are looking for so others can match us correctly
         if (type === 'advanced') {
-            // For advanced, we label ourselves as 'advanced'
-            // NOTE: In this fixed version, the `filter.searchGender` above includes 'advanced',
-            // so Random searchers CAN now find you if you are waiting.
             ctx.user.searchGender = 'advanced';
         } else if (type === 'random') {
             ctx.user.searchGender = 'all';
