@@ -329,12 +329,12 @@ bot.on(['text', 'photo'], async (ctx) => {
     if (user.status === 'chatting' && user.partnerId) {
         
         // --- BLOCK ACTION ---
-        if (text === '⛔️ مسدود کردن این کاربر') {
+        if (text === '⛔️ بلاک کردن این کاربر') {
             // Add partner ID to my blocked list
             user.blockedUsers.push(user.partnerId);
             await user.save();
             
-            await ctx.reply(`✅ کاربر مسدود شد. دیگر با این شخص وصل نخواهید شد.`);
+            await ctx.reply(`✅ کاربر بلاک شد. دیگر با این شخص وصل نخواهید شد.`);
             
             // End the chat
             return endChat(ctx.from.id, user.partnerId, ctx);
