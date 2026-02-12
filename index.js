@@ -515,9 +515,9 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
     // 3. MENUS
     if (text === TEXTS.btn_connect) {
         return ctx.reply(TEXTS.search_menu_title, Markup.keyboard([
-            ['🎲 جستجو شانسی (رایگان)'], 
-            ['👦 جستجو پسر (۲ سکه)', '👩 جستجو دختر (۲ سکه)'], 
-            ['🔍 جستجو پیشرفته (۱۰ سکه)'], 
+            ['🎲 جستجو شانسی'], // Removed "(رایگان)"
+            ['👦 جستجو پسر', '👩 جستجو دختر'], // Removed "(۲ سکه)"
+            ['🔍 جستجو پیشرفته'], // Removed "(۱۰ سکه)"
             [TEXTS.btn_back]
         ]).resize());
     }
@@ -569,10 +569,10 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
     }
     
 // Search Actions (Updated with Persian Text & Costs)
-    if (text === '🎲 جستجو شانسی (رایگان)') return startSearch(ctx, 'random');
-    if (text === '👦 جستجو پسر (۲ سکه)') return startSearch(ctx, 'boy');
-    if (text === '👩 جستجو دختر (۲ سکه)') return startSearch(ctx, 'girl');
-    if (text === '🔍 جستجو پیشرفته (۱۰ سکه)') return showAdvancedMenu(ctx); // Show menu first
+    if (text === '🎲 جستجو شانسی') return startSearch(ctx, 'random');
+    if (text === '👦 جستجو پسر') return startSearch(ctx, 'boy');
+    if (text === '👩 جستجو دختر') return startSearch(ctx, 'girl');
+    if (text === '🔍 جستجو پیشرفته') return showAdvancedMenu(ctx);
 
     // EDIT TRIGGER
     if (text && text.startsWith('✏️')) {
@@ -634,6 +634,27 @@ bot.action('action_unblock_all', async (ctx) => {
     } catch (e) {
         console.error(e);
     }
+});
+// --- SHOP INFO ACTION (Triggered from Low Credit Message) ---
+bot.action('show_shop_info', async (ctx) => {
+    const adminUser = 'dguyhimself'; // Ensure this username is correct
+    
+    const shopMsg = `💎 <b>فروشگاه سکه</b>\n\n` +
+              `👇 <b>تعرفه بسته‌های سکه:</b>\n\n` +
+              `🥉 <b>۵۰ سکه</b> = ۵۰ افغانی\n` +
+              `🥈 <b>۱۲۰ سکه</b> = ۱۰۰ افغانی\n` +
+              `🥇 <b>۳۰۰ سکه</b> = ۲۰۰ افغانی\n\n` +
+              `💳 برای خرید، روی دکمه زیر کلیک کنید و به ادمین پیام دهید.`;
+
+    await ctx.reply(shopMsg, {
+        parse_mode: 'HTML',
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '👤 پیام به ادمین برای خرید', url: `https://t.me/${adminUser}` }]
+            ]
+        }
+    });
+    await ctx.answerCbQuery();
 });
 bot.action('get_ref_link', async (ctx) => {
     const link = `https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}`;
@@ -955,7 +976,7 @@ bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
 
 async function startSearch(ctx, type) {
     const userId = ctx.from.id;
-    const user = ctx.user; // Uses the middleware loaded user
+    const user = ctx.user; 
     const userProfile = user.profile;
 
     // --- 1. DETERMINE COST ---
@@ -963,11 +984,26 @@ async function startSearch(ctx, type) {
     if (type === 'boy' || type === 'girl') cost = 2;
     if (type === 'advanced') cost = 10;
 
-    // --- 2. CHECK BALANCE ---
+    // --- 2. CHECK BALANCE & HANDLE LOW CREDIT ---
     if (user.credits < cost) {
-        return ctx.reply(TEXTS.low_credit_msg, Markup.inlineKeyboard([
-            [Markup.button.callback('💰 دریافت لینک دعوت', 'get_ref_link')]
-        ]));
+        const needed = cost - user.credits;
+        
+        // Professional Error Message
+        const errorMsg = `⚠️ <b>موجودی کافی نیست!</b>\n\n` +
+                         `💎 هزینه این جستجو: <b>${cost}</b> سکه\n` +
+                         `💰 موجودی فعلی شما: <b>${user.credits}</b> سکه\n` +
+                         `❌ کسری: <b>${needed}</b> سکه\n\n` +
+                         `👇 برای ادامه، سکه بخرید یا دوستانتان را دعوت کنید:`;
+
+        return ctx.reply(errorMsg, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '💳 خرید سکه (فوری)', callback_data: 'show_shop_info' }], // New Buy Button
+                    [{ text: '🎁 دریافت لینک دعوت (رایگان)', callback_data: 'get_ref_link' }]
+                ]
+            }
+        });
     }
 
     // --- 3. PREPARE FILTERS (Existing Logic) ---
