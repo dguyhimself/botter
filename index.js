@@ -34,6 +34,10 @@ const TEXTS = {
     ask_purpose: '🎯 هدف شما از اینجا بودن چیست؟',
     ask_photo: '📸 عکس پروفایل بفرستید (یا دکمه "بدون عکس"):',
     no_photo_btn: '🚫 بدون عکس',
+
+    btn_advanced: '🔍 جستجو پیشرفته (رایگان)',
+    adv_menu_title: '🛠 فیلترهای جستجو را تنظیم کنید:\n\nنکته: انتخاب "همه" یعنی آن گزینه برایتان مهم نیست.',
+    filter_set: '✅ فیلتر تنظیم شد.',
     
     // Chat & System
     connected: '✅ وصل شدید! شروع به چت کنید. 👋',
@@ -105,7 +109,7 @@ mongoose.connect(MONGO_URI)
 const userSchema = new mongoose.Schema({
     telegramId: { type: Number, required: true, unique: true },
     displayName: String,
-    regStep: { type: String, default: 'intro' },
+    regStep: { type: String, default: 'intro' }, // Used for Reg AND Search Filters
     isEditing: { type: Boolean, default: false },
     profile: { 
         gender: String, 
@@ -115,18 +119,21 @@ const userSchema = new mongoose.Schema({
         purpose: String, 
         photoId: String 
     },
-    // --- NEW FIELD ADDED HERE ---
-    searchGender: { type: String, default: 'all' }, // Stores: 'all', 'boy', 'girl'
-    // ---------------------------
+    // --- NEW FIELD: STORE SEARCH FILTERS ---
+    searchFilters: {
+        gender: { type: String, default: 'all' },
+        province: { type: String, default: 'all' },
+        age: { type: String, default: 'all' },
+        job: { type: String, default: 'all' },
+        purpose: { type: String, default: 'all' }
+    },
+    // ---------------------------------------
     stats: { likes: { type: Number, default: 0 }, dislikes: { type: Number, default: 0 } },
-        // --- NEW FIELD ---
-    blockedUsers: { type: [Number], default: [] }, // Stores IDs of people I blocked
+    blockedUsers: { type: [Number], default: [] },
     status: { type: String, default: 'idle' },
     partnerId: Number,
     lastMsgId: Number,
     lastReceivedMsgId: Number,
-    
-    // Security & Admin
     banned: { type: Boolean, default: false },
     muteUntil: { type: Date, default: Date.now },
     lastMsgTimestamp: { type: Number, default: 0 },
@@ -422,6 +429,23 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
         return;
     }
 
+    // --- SEARCH FILTER INPUT HANDLING ---
+    if (user.regStep && user.regStep.startsWith('search_')) {
+        const type = user.regStep.replace('search_', '');
+        
+        // Save the filter
+        // If user typed "همه", save 'all'
+        user.searchFilters[type] = (text === 'همه') ? 'all' : text;
+        
+        // Reset state
+        user.regStep = 'completed';
+        await user.save();
+        
+        await ctx.reply(`✅ فیلتر ${type} تنظیم شد.`, Markup.removeKeyboard());
+        return showAdvancedMenu(ctx); // Show the menu again
+    }
+    // ------------------------------------
+
     // 2. REGISTRATION & EDITING FLOW
     if (user.regStep !== 'completed') {
         // If editing and user clicks an unrelated menu button, ignore or handle? 
@@ -435,6 +459,7 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
         return ctx.reply(TEXTS.search_menu_title, Markup.keyboard([
             ['🎲 جستجو شانسی'], 
             ['👦 جستجو پسر', '👩 جستجو دختر'], 
+            [TEXTS.btn_advanced], // <--- NEW BUTTON
             [TEXTS.btn_back]
         ]).resize());
     }
@@ -752,6 +777,69 @@ async function showProfile(ctx, targetUser, isSelf) {
         } catch (e) {}
     }
 }
+async function showAdvancedMenu(ctx) {
+    const f = ctx.user.searchFilters;
+    
+    // Status Text
+    const status = `🕵️ <b>تنظیمات جستجو پیشرفته</b>\n\n` +
+                   `🚻 جنسیت: <b>${f.gender === 'all' ? 'همه' : f.gender}</b>\n` +
+                   `📍 ولایت: <b>${f.province === 'all' ? 'همه' : f.province}</b>\n` +
+                   `🎂 سن: <b>${f.age === 'all' ? 'همه' : f.age}</b>\n` +
+                   `💼 شغل: <b>${f.job === 'all' ? 'همه' : f.job}</b>\n` +
+                   `🎯 هدف: <b>${f.purpose === 'all' ? 'همه' : f.purpose}</b>\n\n` +
+                   `👇 برای تغییر روی دکمه ها کلیک کنید:`;
+
+    // Inline Buttons to toggle settings
+    const kb = Markup.inlineKeyboard([
+        [Markup.button.callback('تغییر جنسیت', 'set_filter_gender'), Markup.button.callback('تغییر ولایت', 'set_filter_province')],
+        [Markup.button.callback('تغییر سن', 'set_filter_age'), Markup.button.callback('تغییر شغل', 'set_filter_job')],
+        [Markup.button.callback('تغییر هدف', 'set_filter_purpose')],
+        [Markup.button.callback('♻️ ریست کردن (همه)', 'reset_filters')],
+        [Markup.button.callback('🚀 شروع جستجو با این فیلترها', 'start_adv_search')]
+    ]);
+
+    // Handle editing existing message or sending new
+    try {
+        await ctx.editMessageText(status, { parse_mode: 'HTML', reply_markup: kb.reply_markup });
+    } catch (e) {
+        await ctx.reply(status, { parse_mode: 'HTML', reply_markup: kb.reply_markup });
+    }
+}
+
+// 1. Enter the Menu
+bot.hears(TEXTS.btn_advanced, (ctx) => showAdvancedMenu(ctx));
+
+// 2. Handle "Change..." clicks
+bot.action(/^set_filter_(.*)$/, async (ctx) => {
+    const type = ctx.match[1];
+    ctx.user.regStep = `search_${type}`; // Set a special state
+    await ctx.user.save();
+
+    let kb;
+    if (type === 'gender') kb = Markup.keyboard(chunk([...GENDERS, 'همه'], 2)).resize();
+    if (type === 'province') kb = Markup.keyboard(chunk([...PROVINCES, 'همه'], 3)).resize();
+    if (type === 'age') kb = Markup.keyboard(chunk([...AGES, 'همه'], 6)).resize();
+    if (type === 'job') kb = Markup.keyboard(chunk([...JOBS, 'همه'], 2)).resize();
+    if (type === 'purpose') kb = Markup.keyboard(chunk([...PURPOSES, 'همه'], 2)).resize();
+
+    await ctx.deleteMessage(); // Remove the inline menu to clean up
+    await ctx.reply(`لطفا ${type} مورد نظر را انتخاب کنید:`, kb);
+});
+
+// 3. Reset Filters
+bot.action('reset_filters', async (ctx) => {
+    ctx.user.searchFilters = { gender: 'all', province: 'all', age: 'all', job: 'all', purpose: 'all' };
+    await ctx.user.save();
+    await ctx.answerCbQuery('فیلترها ریست شد');
+    await showAdvancedMenu(ctx);
+});
+
+// 4. Start the Search
+bot.action('start_adv_search', async (ctx) => {
+    await ctx.deleteMessage();
+    await ctx.reply('🚀 در حال جستجو با فیلترهای شما...', Markup.keyboard([['❌ لغو جستجو']]).resize());
+    return startSearch(ctx, 'advanced');
+});
 // --- VOTE ACTION (Updates Buttons Dynamically) ---
 bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
     const type = ctx.match[1];
@@ -784,51 +872,50 @@ bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
     ctx.answerCbQuery('نظر شما ثبت شد');
 });
 
-// --- SEARCH LOGIC (FIXED GENDER MATCHING) ---
 async function startSearch(ctx, type) {
     const userId = ctx.from.id;
     const userProfile = ctx.user.profile;
     
-    // 1. Determine My Gender (simplify 'پسر 👦' to 'boy')
+    // 1. Determine My Gender for matching
     const myGender = userProfile.gender.includes('پسر') ? 'boy' : 'girl';
     
-    // 2. Define who I am looking for
-    // type is 'random' (all), 'boy', or 'girl'
-    const desiredGender = type === 'random' ? 'all' : type;
-
-    // 3. Build the Database Query
-    // We are looking for a user who:
-    // A. Is currently searching
-    // B. Is NOT me
-    // C. Matches the gender I want (if I chose boy/girl)
-    // D. Is looking for MY gender (or looking for anyone)
-    
-// 3. Build the Database Query
+    // 2. Build Query
     let filter = { 
         status: 'searching', 
-        telegramId: { $ne: userId }, // Not me
-        
-        // --- NEW FILTERS ---
-        // 1. They are NOT in my blocked list
+        telegramId: { $ne: userId },
         telegramId: { $nin: ctx.user.blockedUsers },
-        
-        // 2. I am NOT in their blocked list
-        blockedUsers: { $ne: userId } 
-        // ------------------
+        blockedUsers: { $ne: userId }
     };
-    
-    // Constraint C: Gender I want
-    if (desiredGender === 'boy') {
-        filter['profile.gender'] = /پسر/; // Must contain "Pesar"
-    } else if (desiredGender === 'girl') {
-        filter['profile.gender'] = /دختر/; // Must contain "Dokhtar"
+
+    // --- HANDLE FILTERS ---
+    if (type === 'advanced') {
+        const f = ctx.user.searchFilters;
+
+        // Exact Match Filters (only if not 'all')
+        if (f.gender !== 'all') {
+             // If searching for Boy, look for 'پسر', if Girl look for 'دختر'
+             if (f.gender.includes('پسر')) filter['profile.gender'] = /پسر/;
+             if (f.gender.includes('دختر')) filter['profile.gender'] = /دختر/;
+        }
+        if (f.province !== 'all') filter['profile.province'] = f.province;
+        if (f.age !== 'all') filter['profile.age'] = f.age;
+        if (f.job !== 'all') filter['profile.job'] = f.job;
+        if (f.purpose !== 'all') filter['profile.purpose'] = f.purpose;
+
+        // Reciprocity: The other person must be looking for 'all' OR someone like me
+        // (For now in advanced mode, we assume they accept 'all' or match specific gender logic)
+        filter.searchGender = { $in: ['all', myGender] };
+
+    } else {
+        // --- CLASSIC SIMPLE SEARCH ---
+        const desiredGender = type === 'random' ? 'all' : type;
+        if (desiredGender === 'boy') filter['profile.gender'] = /پسر/;
+        if (desiredGender === 'girl') filter['profile.gender'] = /دختر/;
+        
+        filter.searchGender = { $in: ['all', myGender] };
     }
 
-    // Constraint D: They must want ME (Reciprocal Match)
-    // Their searchGender must be 'all' OR match my gender
-    filter.searchGender = { $in: ['all', myGender] };
-
-    // 4. Try to find a match
+    // 3. Exec Query
     const partner = await User.findOneAndUpdate(
         filter, 
         { status: 'chatting', partnerId: userId }, 
@@ -837,28 +924,22 @@ async function startSearch(ctx, type) {
 
     if (partner) {
         // --- MATCH FOUND ---
-        
-        // Update My Status
         ctx.user.status = 'chatting'; 
         ctx.user.partnerId = partner.telegramId;
-        // Reset search preference
-        ctx.user.searchGender = 'all'; 
+        ctx.user.searchGender = 'all'; // Reset basic search
         await ctx.user.save();
 
         const menu = getChatMenu();
-        // 1. Send Main Menu first (so it sits at the bottom)
-        await ctx.telegram.sendMessage(userId, TEXTS.connected, menu);
         
-        // 2. Send the Icebreaker Button to User (Inline)
+        // Notify Me
+        await ctx.telegram.sendMessage(userId, TEXTS.connected, menu);
         await ctx.telegram.sendMessage(userId, '🗣 نمیدانی چی بگویی؟', Markup.inlineKeyboard([
             Markup.button.callback('🎲 یک سوال پیشنهاد بده', 'action_icebreaker')
         ]));
 
+        // Notify Partner
         try {
-            // 3. Send Main Menu to Partner
             await ctx.telegram.sendMessage(partner.telegramId, TEXTS.connected, menu);
-            
-            // 4. Send Icebreaker Button to Partner (Inline)
             await ctx.telegram.sendMessage(partner.telegramId, '🗣 نمیدانی چی بگویی؟', Markup.inlineKeyboard([
                 Markup.button.callback('🎲 یک سوال پیشنهاد بده', 'action_icebreaker')
             ]));
@@ -866,18 +947,23 @@ async function startSearch(ctx, type) {
             return endChat(userId, partner.telegramId, ctx);
         }
     } else {
-        // --- NO MATCH FOUND (YET) ---
-        // Save my status as searching AND save what I am looking for
-        
+        // --- NO MATCH FOUND ---
         ctx.user.status = 'searching';
-        ctx.user.searchGender = desiredGender; // Important: Save preference!
+        // If advanced, we just say 'advanced', otherwise save the gender preference
+        ctx.user.searchGender = (type === 'advanced') ? 'advanced' : type; 
         await ctx.user.save();
         
-        const typeText = desiredGender === 'all' ? 'شانسی' : (desiredGender === 'boy' ? 'پسر' : 'دختر');
-        await ctx.reply(`${TEXTS.searching}\n🔎 فیلتر شما: ${typeText}`, Markup.keyboard([['❌ لغو جستجو']]).resize());
+        let msg = `${TEXTS.searching}\n`;
+        if (type === 'advanced') {
+            msg += `⚙️ در حال جستجو با فیلترهای پیشرفته...`;
+        } else {
+            const typeText = type === 'all' || type === 'random' ? 'شانسی' : (type === 'boy' ? 'پسر' : 'دختر');
+            msg += `🔎 فیلتر شما: ${typeText}`;
+        }
+        
+        await ctx.reply(msg, Markup.keyboard([['❌ لغو جستجو']]).resize());
     }
 }
-
 async function stopSearch(ctx) { 
     if (ctx.user.status === 'chatting') return; // Should use disconnect button
     ctx.user.status = 'idle'; 
