@@ -81,18 +81,12 @@ const userSchema = new mongoose.Schema({
     displayName: String,
     regStep: { type: String, default: 'intro' },
     isEditing: { type: Boolean, default: false },
-    profile: { 
-        gender: String, 
-        age: String, 
-        province: String, 
-        job: String, 
-        purpose: String, 
-        photoId: String 
-    },
+    profile: { gender: String, age: String, province: String, job: String, purpose: String, photoId: String },
     stats: { likes: { type: Number, default: 0 }, dislikes: { type: Number, default: 0 } },
-    status: { type: String, default: 'idle' }, // idle, searching, chatting
+    status: { type: String, default: 'idle' },
     partnerId: Number,
     lastMsgId: Number,
+    lastReceivedMsgId: Number, // <--- NEW: Stores the ID of the last message received for reporting
     
     // Security & Admin
     banned: { type: Boolean, default: false },
@@ -182,14 +176,25 @@ bot.use(async (ctx, next) => {
 });
 
 // --- ADMIN COMMANDS ---
+// Usage: /ban 12345 Spamming users
 bot.command('ban', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    const targetId = parseInt(ctx.message.text.split(' ')[1]);
-    if (!targetId) return ctx.reply('❌ آیدی وارد نشد. مثال: /ban 12345');
+    const args = ctx.message.text.split(' ');
+    const targetId = parseInt(args[1]);
+    const reason = args.slice(2).join(' ') || 'رعایت نکردن قوانین'; // Default reason
+
+    if (!targetId) return ctx.reply('❌ فرمت: /ban [ID] [Reason]');
     
+    // Update DB
     await User.updateOne({ telegramId: targetId }, { banned: true, status: 'idle', partnerId: null });
-    // If they were chatting, notify the partner (optional, strictly disconnect logic handles cleanup)
-    ctx.reply(`✅ کاربر ${targetId} بن شد.`);
+    
+    // Notify Admin
+    ctx.reply(`✅ کاربر ${targetId} بن شد.\n📝 دلیل: ${reason}`);
+
+    // Notify User
+    try {
+        await ctx.telegram.sendMessage(targetId, TEXTS.banned_reason + reason);
+    } catch (e) {} // User might have blocked bot
 });
 
 bot.command('unban', async (ctx) => {
@@ -199,6 +204,41 @@ bot.command('unban', async (ctx) => {
     
     await User.updateOne({ telegramId: targetId }, { banned: false });
     ctx.reply(`✅ کاربر ${targetId} آنبن شد.`);
+    try { await ctx.telegram.sendMessage(targetId, '✅ حساب شما باز شد.'); } catch (e) {}
+});
+
+// Usage: /mute 12345 30 (Mutes for 30 mins) or /mute 12345 (Default 15 mins)
+bot.command('mute', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const args = ctx.message.text.split(' ');
+    const targetId = parseInt(args[1]);
+    let minutes = parseInt(args[2]);
+
+    if (!targetId) return ctx.reply('❌ فرمت: /mute [ID] [Time(Optional)]');
+    if (!minutes || isNaN(minutes)) minutes = 15; // Default 15 minutes
+
+    const muteUntil = new Date(Date.now() + minutes * 60000);
+    
+    await User.updateOne({ telegramId: targetId }, { muteUntil: muteUntil });
+    
+    ctx.reply(`✅ کاربر ${targetId} برای ${minutes} دقیقه میوت شد.`);
+    
+    // Notify User
+    try {
+        await ctx.telegram.sendMessage(targetId, TEXTS.muted_msg + `${minutes} دقیقه.`);
+    } catch (e) {}
+});
+
+bot.command('unmute', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const targetId = parseInt(ctx.message.text.split(' ')[1]);
+    if (!targetId) return ctx.reply('❌ آیدی وارد نشد.');
+
+    // Set muteUntil to current time or past to unmute immediately
+    await User.updateOne({ telegramId: targetId }, { muteUntil: Date.now() });
+    
+    ctx.reply(`✅ کاربر ${targetId} آن‌میوت شد.`);
+    try { await ctx.telegram.sendMessage(targetId, TEXTS.unmuted_msg); } catch (e) {}
 });
 
 bot.command('stats', async (ctx) => {
@@ -277,11 +317,12 @@ bot.on(['text', 'photo'], async (ctx) => {
         // Link Block
         if (/(https?:\/\/|t\.me\/|@[\w]+)/gi.test(text)) return ctx.reply(TEXTS.link_blocked);
 
-        // Forward Message
+        // Forward Message and Capture ID for Evidence
         try { 
-            await ctx.copyMessage(user.partnerId); 
+            const sentMsg = await ctx.copyMessage(user.partnerId); 
+            // Save this message ID in the Partner's database so they can report it later
+            await User.updateOne({ telegramId: user.partnerId }, { lastReceivedMsgId: sentMsg.message_id });
         } catch (e) { 
-            // If partner blocked bot, end chat
             await endChat(ctx.from.id, user.partnerId, ctx); 
         }
         return;
@@ -368,28 +409,38 @@ bot.on(['text', 'photo'], async (ctx) => {
 // --- REPORT ACTION HANDLER ---
 bot.action(/^rep_(.*)_(.*)$/, async (ctx) => {
     try {
-        const reasonMap = {
-            'harass': 'مزاحمت',
-            'spam': 'تبلیغات',
-            'rude': 'بی‌ادبی',
-            'scam': 'کلاهبرداری'
-        };
+        const reasonMap = { 'harass': 'مزاحمت', 'spam': 'تبلیغات', 'rude': 'بی‌ادبی', 'scam': 'کلاهبرداری' };
         const rawReason = ctx.match[1];
         const reason = reasonMap[rawReason] || rawReason;
         const offenderId = parseInt(ctx.match[2]);
         const reporterId = ctx.from.id;
 
+        // Get the reporter to find the evidence (last received message)
+        const reporter = await User.findOne({ telegramId: reporterId });
+
         await ctx.answerCbQuery('گزارش ثبت شد');
         await ctx.editMessageText(TEXTS.report_sent);
 
+        // 1. Send Admin Alert
         const adminMsg = `🚨 **گزارش جدید!**\n\n` +
                          `👤 گزارش‌دهنده: \`${reporterId}\`\n` +
                          `👿 متخلف: \`${offenderId}\`\n` +
                          `⚠️ علت: ${reason}\n\n` +
-                         `👇 عملیات (کپی کن و بفرست): \n` +
-                         `/ban ${offenderId}`;
+                         `👇 **مدرک (آخرین پیام):** در پایین 👇\n` +
+                         `🔨 عملیات:\n` +
+                         `/ban ${offenderId} [دلیل]\n` +
+                         `/mute ${offenderId} [دقیقه]`;
         
         await ctx.telegram.sendMessage(ADMIN_ID, adminMsg, { parse_mode: 'Markdown' });
+
+        // 2. Forward the Evidence (The bad message) to Admin
+        if (reporter && reporter.lastReceivedMsgId) {
+            try {
+                await ctx.telegram.forwardMessage(ADMIN_ID, reporterId, reporter.lastReceivedMsgId);
+            } catch (err) {
+                await ctx.telegram.sendMessage(ADMIN_ID, '⚠️ پیام مدرک حذف شده یا قابل دسترسی نیست.');
+            }
+        }
     } catch (e) { console.error('Report Error:', e); }
 });
 
