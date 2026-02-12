@@ -87,12 +87,22 @@ const userSchema = new mongoose.Schema({
     displayName: String,
     regStep: { type: String, default: 'intro' },
     isEditing: { type: Boolean, default: false },
-    profile: { gender: String, age: String, province: String, job: String, purpose: String, photoId: String },
+    profile: { 
+        gender: String, 
+        age: String, 
+        province: String, 
+        job: String, 
+        purpose: String, 
+        photoId: String 
+    },
+    // --- NEW FIELD ADDED HERE ---
+    searchGender: { type: String, default: 'all' }, // Stores: 'all', 'boy', 'girl'
+    // ---------------------------
     stats: { likes: { type: Number, default: 0 }, dislikes: { type: Number, default: 0 } },
     status: { type: String, default: 'idle' },
     partnerId: Number,
     lastMsgId: Number,
-    lastReceivedMsgId: Number, // <--- NEW: Stores the ID of the last message received for reporting
+    lastReceivedMsgId: Number,
     
     // Security & Admin
     banned: { type: Boolean, default: false },
@@ -608,49 +618,77 @@ bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
     ctx.answerCbQuery('نظر شما ثبت شد');
 });
 
-// --- SEARCH LOGIC (FIXED CONCURRENCY) ---
+// --- SEARCH LOGIC (FIXED GENDER MATCHING) ---
 async function startSearch(ctx, type) {
     const userId = ctx.from.id;
+    const userProfile = ctx.user.profile;
     
-    // 1. Define Filter
+    // 1. Determine My Gender (simplify 'پسر 👦' to 'boy')
+    const myGender = userProfile.gender.includes('پسر') ? 'boy' : 'girl';
+    
+    // 2. Define who I am looking for
+    // type is 'random' (all), 'boy', or 'girl'
+    const desiredGender = type === 'random' ? 'all' : type;
+
+    // 3. Build the Database Query
+    // We are looking for a user who:
+    // A. Is currently searching
+    // B. Is NOT me
+    // C. Matches the gender I want (if I chose boy/girl)
+    // D. Is looking for MY gender (or looking for anyone)
+    
     let filter = { 
         status: 'searching', 
         telegramId: { $ne: userId } 
     };
     
-    if (type !== 'random') {
-        // Regex to match "پسر" or "دختر" in the string "پسر 👦"
-        const genderTerm = type === 'boy' ? 'پسر' : 'دختر';
-        filter['profile.gender'] = { $regex: genderTerm };
+    // Constraint C: Gender I want
+    if (desiredGender === 'boy') {
+        filter['profile.gender'] = /پسر/; // Must contain "Pesar"
+    } else if (desiredGender === 'girl') {
+        filter['profile.gender'] = /دختر/; // Must contain "Dokhtar"
     }
 
-    // 2. Atomic Find and Update to prevent race conditions
+    // Constraint D: They must want ME (Reciprocal Match)
+    // Their searchGender must be 'all' OR match my gender
+    filter.searchGender = { $in: ['all', myGender] };
+
+    // 4. Try to find a match
     const partner = await User.findOneAndUpdate(
         filter, 
         { status: 'chatting', partnerId: userId }, 
-        { new: true } // Return updated doc
+        { new: true }
     );
 
     if (partner) {
-        // MATCH FOUND!
-        // Update Current User
+        // --- MATCH FOUND ---
+        
+        // Update My Status
         ctx.user.status = 'chatting'; 
         ctx.user.partnerId = partner.telegramId;
+        // Reset search preference
+        ctx.user.searchGender = 'all'; 
         await ctx.user.save();
 
         const menu = getChatMenu();
         await ctx.telegram.sendMessage(userId, TEXTS.connected, menu);
+        
         try {
             await ctx.telegram.sendMessage(partner.telegramId, TEXTS.connected, menu);
         } catch(e) {
-            // If partner blocked bot immediately, end chat
+            // If partner blocked bot, close chat immediately
             return endChat(userId, partner.telegramId, ctx);
         }
     } else {
-        // NO MATCH YET
-        ctx.user.status = 'searching'; 
+        // --- NO MATCH FOUND (YET) ---
+        // Save my status as searching AND save what I am looking for
+        
+        ctx.user.status = 'searching';
+        ctx.user.searchGender = desiredGender; // Important: Save preference!
         await ctx.user.save();
-        await ctx.reply(TEXTS.searching, Markup.keyboard([['❌ لغو جستجو']]).resize());
+        
+        const typeText = desiredGender === 'all' ? 'شانسی' : (desiredGender === 'boy' ? 'پسر' : 'دختر');
+        await ctx.reply(`${TEXTS.searching}\n🔎 فیلتر شما: ${typeText}`, Markup.keyboard([['❌ لغو جستجو']]).resize());
     }
 }
 
