@@ -1060,9 +1060,9 @@ bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
 async function startSearch(ctx, type) {
     const userId = ctx.from.id;
     
-    // 1. FORCE RELOAD USER (To ensure we have the latest filters/credits)
+    // 1. FORCE RELOAD USER
     const user = await User.findOne({ telegramId: userId });
-    const userProfile = user.profile;
+    const userProfile = user.profile || {};
 
     // --- 2. DETERMINE COST ---
     let cost = 0;
@@ -1093,56 +1093,86 @@ async function startSearch(ctx, type) {
     const isGirl = userProfile.gender && (userProfile.gender.includes('دختر') || userProfile.gender.toLowerCase().includes('girl'));
     const myGender = isGirl ? 'girl' : 'boy';
 
-    // --- 5. PREPARE FILTER ---
-    let filter = { 
+    // --- 5. PREPARE BASE FILTER ---
+    let baseFilter = { 
         status: 'searching', 
         telegramId: { $ne: userId, $nin: user.blockedUsers }, 
         blockedUsers: { $ne: userId } 
     };
 
-    // --- 6. BILATERAL MATCHING (CRITICAL FIX) ---
+    let finalFilter = {};
+
+    // --- 6. LOGIC SPLIT ---
+
     if (type === 'advanced') {
-        // If I am Advanced, I can match with:
-        // 1. Random people ('all', 'random')
-        // 2. Other Advanced people ('advanced')
-        // 3. People looking for my gender specifically
-        filter.searchGender = { $in: ['all', 'random', 'advanced', myGender] };
+        // === I AM THE FILTERER ===
+        // I want to find someone, and I am picky.
         
-        // --- APPLY MY FILTERS (Strictly) ---
+        finalFilter = { ...baseFilter };
+
+        // 1. Who can I match with?
+        // Randoms, other Advanceds, or people looking for me.
+        finalFilter.searchGender = { $in: ['all', 'random', 'advanced', myGender] };
+        
+        // 2. Apply MY Filters to THEM
         const f = user.searchFilters || {}; 
         
         if (f.gender && f.gender !== 'all') {
-             if (f.gender.includes('پسر')) filter['profile.gender'] = /پسر|boy/i;
-             else if (f.gender.includes('دختر')) filter['profile.gender'] = /دختر|girl/i;
+             if (f.gender.includes('پسر')) finalFilter['profile.gender'] = /پسر|boy/i;
+             else if (f.gender.includes('دختر')) finalFilter['profile.gender'] = /دختر|girl/i;
         }
         
-        if (f.province && f.province !== 'all') {
-            filter['profile.province'] = new RegExp(f.province, 'i');
-        }
-        if (f.job && f.job !== 'all') {
-            filter['profile.job'] = new RegExp(f.job, 'i');
-        }
-        if (f.age && f.age !== 'all') {
-            filter['profile.age'] = f.age;
-        }
-        if (f.purpose && f.purpose !== 'all') {
-            filter['profile.purpose'] = new RegExp(f.purpose, 'i');
-        }
+        if (f.province && f.province !== 'all') finalFilter['profile.province'] = new RegExp(f.province, 'i');
+        if (f.job && f.job !== 'all') finalFilter['profile.job'] = new RegExp(f.job, 'i');
+        if (f.age && f.age !== 'all') finalFilter['profile.age'] = f.age;
+        if (f.purpose && f.purpose !== 'all') finalFilter['profile.purpose'] = new RegExp(f.purpose, 'i');
 
     } else {
-        // --- NORMAL SEARCH (Random/Boy/Girl) ---
-        // CRITICAL: We DO NOT include 'advanced' here.
-        // Random searchers cannot "accidentally" pick up an Advanced user waiting in the queue.
-        filter.searchGender = { $in: ['all', 'random', myGender] };
+        // === I AM A RANDOM SEARCHER (OR BOY/GIRL SEARCHER) ===
+        // I need to find standard waiters OR Advanced waiters whose requirements I MEET.
 
-        // Specific Gender Buttons
-        if (type === 'boy') filter['profile.gender'] = /پسر|boy/i;
-        if (type === 'girl') filter['profile.gender'] = /دختر|girl/i;
+        // 1. My target gender (Who am I looking for?)
+        let targetGenderRegex;
+        if (type === 'boy') targetGenderRegex = /پسر|boy/i;
+        if (type === 'girl') targetGenderRegex = /دختر|girl/i;
+        // If random, undefined (accepts anyone)
+
+        const matchConditions = [];
+
+        // Condition A: Match Standard Waiters (Legacy/Random people)
+        // They must be looking for 'all', 'random', or 'myGender'
+        const standardMatch = {
+            searchGender: { $in: ['all', 'random', myGender] }
+        };
+        // If I strictly want a boy/girl, enforce it on the profile
+        if (targetGenderRegex) standardMatch['profile.gender'] = targetGenderRegex;
+        matchConditions.push(standardMatch);
+
+        // Condition B: Match Advanced Waiters (If I qualify for them)
+        // They are looking for 'advanced', but I must match THEIR filters.
+        const advancedMatch = {
+            searchGender: 'advanced',
+            // AND I must match THEIR filters (Reverse Check)
+            'searchFilters.gender':   { $in: ['all', 'همه', userProfile.gender] }, 
+            'searchFilters.province': { $in: ['all', 'همه', userProfile.province] },
+            'searchFilters.age':      { $in: ['all', 'همه', userProfile.age] },
+            'searchFilters.job':      { $in: ['all', 'همه', userProfile.job] },
+            'searchFilters.purpose':  { $in: ['all', 'همه', userProfile.purpose] }
+        };
+        // If I strictly want a boy/girl, the Advanced user must also be that gender
+        if (targetGenderRegex) advancedMatch['profile.gender'] = targetGenderRegex;
+        matchConditions.push(advancedMatch);
+
+        // Combine with $or
+        finalFilter = {
+            ...baseFilter,
+            $or: matchConditions
+        };
     }
 
     // --- 7. EXECUTE SEARCH ---
     const partner = await User.findOneAndUpdate(
-        filter, 
+        finalFilter, 
         { status: 'chatting', partnerId: userId }, 
         { new: true }
     );
@@ -1163,7 +1193,6 @@ async function startSearch(ctx, type) {
             searchGender: 'all' // Reset
         });
         
-        // Update context
         ctx.user.status = 'chatting';
         ctx.user.partnerId = partner.telegramId;
 
@@ -1184,12 +1213,7 @@ async function startSearch(ctx, type) {
     } else {
         // ⏳ NO MATCH - GO TO WAITING ROOM
         let newSearchGender = type;
-        
-        // Map types to database values
         if (type === 'random') newSearchGender = 'all';
-        
-        // If Advanced, we mark ourselves as 'advanced'.
-        // Because of step 6, Random searchers will NOT see us.
         if (type === 'advanced') newSearchGender = 'advanced'; 
 
         await User.updateOne({ telegramId: userId }, {
