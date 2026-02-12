@@ -567,33 +567,37 @@ async function stepHandler(ctx) {
     }
 }
 
-// --- PROFILE HANDLER ---
+// --- PROFILE HANDLER (Fixed Buttons) ---
 async function showProfile(ctx, targetUser, isSelf) {
     if (!targetUser) return ctx.reply('کاربر یافت نشد.');
     
     const p = targetUser.profile;
+    
+    // 1. Build Caption (Removed the text line showing likes/dislikes)
     const caption = `🎫 پروفایل کاربری\n\n` +
                     `👤 نام: ${targetUser.displayName || 'نامشخص'}\n` +
                     `🚻 جنسیت: ${p.gender || '?'}\n` +
                     `🎂 سن: ${p.age || '?'}\n` +
                     `📍 ولایت: ${p.province || '?'}\n` +
                     `💼 شغل: ${p.job || '?'}\n` +
-                    `🎯 هدف: ${p.purpose || '?'}\n` +
-                    `👍 ${targetUser.stats.likes} | 👎 ${targetUser.stats.dislikes}`;
+                    `🎯 هدف: ${p.purpose || '?'}`;
 
+    // 2. Build Buttons with Numbers inside them
     const buttons = Markup.inlineKeyboard([
         [
-            Markup.button.callback(`👍 لایک`, `like_${targetUser.telegramId}`),
-            Markup.button.callback(`👎 دیس‌لایک`, `dislike_${targetUser.telegramId}`)
+            Markup.button.callback(`👍 ${targetUser.stats.likes}`, `like_${targetUser.telegramId}`),
+            Markup.button.callback(`👎 ${targetUser.stats.dislikes}`, `dislike_${targetUser.telegramId}`)
         ]
     ]);
 
+    // 3. Send Message
     if (p.photoId) {
         await ctx.replyWithPhoto(p.photoId, { caption, reply_markup: buttons.reply_markup });
     } else {
         await ctx.reply(caption, buttons);
     }
 
+    // 4. Notify if viewed by someone else
     if (!isSelf) {
         try { 
             await ctx.telegram.sendMessage(targetUser.telegramId, TEXTS.profile_viewed); 
@@ -601,20 +605,35 @@ async function showProfile(ctx, targetUser, isSelf) {
     }
 }
 
-// --- VOTE ACTION ---
+// --- VOTE ACTION (Updates Buttons Dynamically) ---
 bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
     const type = ctx.match[1];
     const targetId = parseInt(ctx.match[2]);
     
+    // Prevent self-voting
     if (targetId === ctx.from.id) return ctx.answerCbQuery(TEXTS.self_vote);
     
     const target = await User.findOne({ telegramId: targetId });
     if (!target) return ctx.answerCbQuery('کاربر یافت نشد');
 
+    // Update Stats
     if (type === 'like') target.stats.likes++; 
     else target.stats.dislikes++;
     
     await target.save();
+
+    // Update the Buttons with new numbers
+    try {
+        await ctx.editMessageReplyMarkup({
+            inline_keyboard: [[
+                { text: `👍 ${target.stats.likes}`, callback_data: `like_${targetId}` },
+                { text: `👎 ${target.stats.dislikes}`, callback_data: `dislike_${targetId}` }
+            ]]
+        });
+    } catch (e) {
+        // Ignore error if user clicks too fast (Telegram complains if content hasn't changed)
+    }
+
     ctx.answerCbQuery('نظر شما ثبت شد');
 });
 
