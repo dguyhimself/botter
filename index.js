@@ -68,6 +68,18 @@ const TEXTS = {
     report_reasons: ['تبلیغات/لینک', 'بی‌ادبی/توهین', 'مزاحمت', 'اسکم/کلاهبرداری']
 };
 
+const ICEBREAKERS = [
+    'اگر میتوانستی یک ابرقدرت داشته باشی، چی انتخاب میکردی؟ 🦸‍♂️',
+    'آخرین آهنگی که گوش دادی چی بود؟ 🎧',
+    'بدترین غذایی که تا حالا خوردی چی بوده؟ 🤢',
+    'اگر ۱ میلیارد پول داشتی، اولین چیزی که میخریدی چی بود؟ 💰',
+    'فیلم مورد علاقه ات چیست؟ 🎬',
+    'خنده دار ترین خاطره مکتبت را بگو 😂',
+    'اگر حیوان بودی، دوست داشتی چی باشی؟ 🦁',
+    'یک راز که به کسی نگفتی را بگو 🤫',
+    'طرفدار کدام تیم فوتبال هستی؟ ⚽️'
+];
+
 const PROVINCES = ['کابل', 'هرات', 'قندهار', 'بلخ', 'ننگرهار', 'هلمند', 'کندز', 'فاریاب', 'غزنی', 'پکتیا', 'جوزجان', 'تخار', 'بدخشان', 'بغلان', 'خوست', 'سمنگان', 'نیمروز', 'سرپل', 'فراه', 'کنر', 'لوگر', 'زابل', 'لغمان', 'پکتیکا', 'پنجشیر', 'پروان', 'اروزگان', 'کاپیسا', 'بامیان', 'میدان وردک', 'غور', 'دایکندی', 'نورستان', 'بادغیس', 'خارج از کشور'];
 const GENDERS = ['پسر 👦', 'دختر 👧'];
 const JOBS = ['کارگر 🛠', 'شغل آزاد 💼', 'محصل 🎓', 'بیکار 🏠', 'کارمند 📝', 'داکتر 🩺', 'اینجینیر 📐'];
@@ -520,6 +532,34 @@ bot.action('action_unblock_all', async (ctx) => {
         console.error(e);
     }
 });
+// --- ICEBREAKER ACTION ---
+bot.action('action_icebreaker', async (ctx) => {
+    try {
+        const user = ctx.user;
+        // 1. Check if they are still chatting
+        if (user.status !== 'chatting' || !user.partnerId) {
+            return ctx.deleteMessage(); // Delete button if chat ended
+        }
+
+        // 2. Pick a random question
+        const question = ICEBREAKERS[Math.floor(Math.random() * ICEBREAKERS.length)];
+        const msgText = `🎲 <b>سوال پیشنهادی:</b>\n\n${question}`;
+
+        // 3. Send the question to the USER (and delete the button)
+        await ctx.deleteMessage(); // This makes the button disappear!
+        await ctx.reply(msgText, { parse_mode: 'HTML' });
+
+        // 4. Send the question to the PARTNER
+        try {
+            await ctx.telegram.sendMessage(user.partnerId, msgText, { parse_mode: 'HTML' });
+        } catch (e) {
+            // Partner blocked bot
+        }
+
+    } catch (e) {
+        console.error('Icebreaker Error:', e);
+    }
+});
 
 // --- REPORT ACTION HANDLER ---
 bot.action(/^rep_(.*)_(.*)$/, async (ctx) => {
@@ -806,12 +846,23 @@ async function startSearch(ctx, type) {
         await ctx.user.save();
 
         const menu = getChatMenu();
+        // 1. Send Main Menu first (so it sits at the bottom)
         await ctx.telegram.sendMessage(userId, TEXTS.connected, menu);
         
+        // 2. Send the Icebreaker Button to User (Inline)
+        await ctx.telegram.sendMessage(userId, '🗣 نمیدانی چی بگویی؟', Markup.inlineKeyboard([
+            Markup.button.callback('🎲 یک سوال پیشنهاد بده', 'action_icebreaker')
+        ]));
+
         try {
+            // 3. Send Main Menu to Partner
             await ctx.telegram.sendMessage(partner.telegramId, TEXTS.connected, menu);
+            
+            // 4. Send Icebreaker Button to Partner (Inline)
+            await ctx.telegram.sendMessage(partner.telegramId, '🗣 نمیدانی چی بگویی؟', Markup.inlineKeyboard([
+                Markup.button.callback('🎲 یک سوال پیشنهاد بده', 'action_icebreaker')
+            ]));
         } catch(e) {
-            // If partner blocked bot, close chat immediately
             return endChat(userId, partner.telegramId, ctx);
         }
     } else {
