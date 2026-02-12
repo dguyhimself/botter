@@ -1070,10 +1070,9 @@ async function startSearch(ctx, type) {
     if (type === 'boy' || type === 'girl') cost = 2;
     if (type === 'advanced') cost = 10;
 
-    // --- 2. CHECK BALANCE & HANDLE LOW CREDIT ---
+    // --- 2. CHECK BALANCE ---
     if (user.credits < cost) {
         const needed = cost - user.credits;
-        
         const errorMsg = `⚠️ <b>موجودی کافی نیست!</b>\n\n` +
                          `💎 هزینه این جستجو: <b>${cost}</b> سکه\n` +
                          `💰 موجودی فعلی شما: <b>${user.credits}</b> سکه\n` +
@@ -1091,89 +1090,102 @@ async function startSearch(ctx, type) {
         });
     }
 
-    // --- 3. PREPARE FILTERS (FIXED LOGIC) ---
-    // Robust Gender Check: Ensure we know if I am a boy or girl
-    const myGender = (userProfile.gender && userProfile.gender.includes('دختر')) ? 'girl' : 'boy';
-    
-    // Base Filter: Not Me, Not Blocked, Not blocked by them
+    // --- 3. DETERMINE MY GENDER (ROBUST) ---
+    // We check if I am a girl. If not, I am a boy.
+    // This Regex checks for "Girl" or "دختر" inside the gender string.
+    const isGirl = /دختر|girl/i.test(userProfile.gender || '');
+    const myGender = isGirl ? 'girl' : 'boy';
+
+    // --- 4. PREPARE FILTER ---
     let filter = { 
         status: 'searching', 
         telegramId: { $ne: userId, $nin: user.blockedUsers }, 
         blockedUsers: { $ne: userId } 
     };
 
+    // --- BILATERAL MATCHING RULE (VERY IMPORTANT) ---
+    // We only want to match with people who are looking for:
+    // 1. 'all' (Random)
+    // 2. 'random' (Legacy Random)
+    // 3. OR 'myGender' (Specifically looking for me)
+    // This prevents a "Girl looking for Girl" from matching with "Boy looking for Random"
+    filter.searchGender = { $in: ['all', 'random', myGender] };
+
+    // --- APPLY USER FILTERS ---
     if (type === 'advanced') {
         const f = user.searchFilters;
         
-        // Gender Filter (Regex is okay here for "All Boys" etc, but exact is better if possible)
+        // Use Regex for looser matching (Matches "پسر", "پسر 👦", "Male")
         if (f.gender !== 'all') {
-             if (f.gender.includes('پسر')) filter['profile.gender'] = GENDERS[0]; // 'پسر 👦'
-             if (f.gender.includes('دختر')) filter['profile.gender'] = GENDERS[1]; // 'دختر 👧'
+             if (f.gender.includes('پسر')) filter['profile.gender'] = /پسر|boy/i;
+             if (f.gender.includes('دختر')) filter['profile.gender'] = /دختر|girl/i;
         }
+        
         if (f.province !== 'all') filter['profile.province'] = f.province;
         if (f.age !== 'all') filter['profile.age'] = f.age;
         if (f.job !== 'all') filter['profile.job'] = f.job;
         if (f.purpose !== 'all') filter['profile.purpose'] = f.purpose;
         
-        // Target must be looking for 'all', 'random' (old data), 'advanced', or 'myGender'
-        filter.searchGender = { $in: ['all', 'random', 'advanced', myGender] };
+        // For Advanced search, we allow matching with 'advanced' searchers too
+        filter.searchGender['$in'].push('advanced');
 
     } else {
         const desiredGender = type === 'random' ? 'all' : type;
         
-        // --- STRICT GENDER FILTER ---
-        // Use Exact String Match from global GENDERS array
-        if (desiredGender === 'boy') filter['profile.gender'] = GENDERS[0]; // Matches 'پسر 👦'
-        if (desiredGender === 'girl') filter['profile.gender'] = GENDERS[1]; // Matches 'دختر 👧'
-        
-        // --- TARGET PREFERENCE FILTER ---
-        // The partner must be looking for: 'all' (Random), 'random' (Old Data), or 'myGender'
-        filter.searchGender = { $in: ['all', 'random', myGender] };
+        // Simple Regex Filters
+        if (desiredGender === 'boy') filter['profile.gender'] = /پسر|boy/i;
+        if (desiredGender === 'girl') filter['profile.gender'] = /دختر|girl/i;
     }
 
-    // --- 4. EXECUTE SEARCH ---
+    // --- 5. EXECUTE SEARCH ---
+    // We try to find someone waiting
     const partner = await User.findOneAndUpdate(
         filter, 
         { status: 'chatting', partnerId: userId }, 
         { new: true }
     );
 
-    // --- 5. DEDUCT CREDITS ---
+    // --- 6. DEDUCT CREDITS ---
     if (cost > 0) {
         user.credits -= cost;
         await user.save();
         await ctx.reply(`💸 مبلغ ${cost} سکه کسر شد.\n💰 باقیمانده: ${user.credits}`);
     }
 
+    // --- 7. HANDLE RESULT ---
     if (partner) {
-        // --- MATCH FOUND ---
+        // MATCH FOUND
         ctx.user.status = 'chatting'; 
         ctx.user.partnerId = partner.telegramId;
-        ctx.user.searchGender = 'all'; // Reset search preference
+        ctx.user.searchGender = 'all'; // Reset
         await ctx.user.save();
 
         const menu = getChatMenu();
         await ctx.telegram.sendMessage(userId, TEXTS.connected, menu);
-        await ctx.telegram.sendMessage(userId, '🗣 نمیدانی چی بگویی؟', Markup.inlineKeyboard([
-            Markup.button.callback('🎲 یک سوال پیشنهاد بده', 'action_icebreaker')
-        ]));
+        
+        // Send Icebreaker hint
+        const hint = '🗣 نمیدانی چی بگویی؟';
+        const iceBtn = Markup.inlineKeyboard([Markup.button.callback('🎲 یک سوال پیشنهاد بده', 'action_icebreaker')]);
 
+        await ctx.telegram.sendMessage(userId, hint, iceBtn);
         try {
             await ctx.telegram.sendMessage(partner.telegramId, TEXTS.connected, menu);
-            await ctx.telegram.sendMessage(partner.telegramId, '🗣 نمیدانی چی بگویی؟', Markup.inlineKeyboard([
-                Markup.button.callback('🎲 یک سوال پیشنهاد بده', 'action_icebreaker')
-            ]));
+            await ctx.telegram.sendMessage(partner.telegramId, hint, iceBtn);
         } catch(e) {
             return endChat(userId, partner.telegramId, ctx);
         }
+
     } else {
-        // --- NO MATCH FOUND (SAVE STATUS) ---
+        // NO MATCH - GO TO WAITING ROOM
         ctx.user.status = 'searching';
         
-        // FIX: Normalize 'random' to 'all' so others can find me
-        const saveType = (type === 'random') ? 'all' : type;
-        // If Advanced, save as 'advanced', otherwise use the type (all/boy/girl)
-        ctx.user.searchGender = (type === 'advanced') ? 'advanced' : saveType;
+        // IMPORTANT: We must save EXACTLY what we are looking for.
+        // If I am looking for a 'girl', I save 'girl'.
+        // This ensures the "Bilateral Rule" (Line 1045) works for others.
+        // If I save 'girl', a "Boy looking for Random" CANNOT find me.
+        if (type === 'random') ctx.user.searchGender = 'all';
+        else if (type === 'advanced') ctx.user.searchGender = 'advanced';
+        else ctx.user.searchGender = type; // 'boy' or 'girl'
         
         await ctx.user.save();
         
@@ -1181,7 +1193,6 @@ async function startSearch(ctx, type) {
         if (type === 'advanced') {
             msg += `⚙️ در حال جستجو با فیلترهای پیشرفته...`;
         } else {
-            // Display text logic
             const typeText = (type === 'random' || type === 'all') ? 'شانسی' : (type === 'boy' ? 'پسر' : 'دختر');
             msg += `🔎 فیلتر شما: ${typeText}`;
         }
