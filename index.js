@@ -453,29 +453,11 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
                 [Markup.button.callback('کلاهبرداری', `rep_scam_${user.partnerId}`)]
             ]));
         }
-
-    // --- COIN SHOP & REFERRAL ---
-        if (text === TEXTS.btn_shop) {
-            // REPLACE 'ADMIN_USERNAME' WITH YOUR REAL TELEGRAM USERNAME (WITHOUT @)
-            const adminUser = 'dguyhimself'; 
-            
-            return ctx.reply(TEXTS.shop_msg, {
-                parse_mode: 'HTML',
-                reply_markup: {
-                    inline_keyboard: [
-                        // Button to DM Admin
-                        [{ text: '👤 ارتباط با ادمین (خرید)', url: `https://t.me/${adminUser}` }],
-                        // Button to get Free Link
-                        [{ text: '🎁 دریافت لینک دعوت (رایگان)', callback_data: 'get_ref_link' }]
-                    ]
-                }
-            });
-        }
         
         // Link Block
         if (/(https?:\/\/|t\.me\/|@[\w]+)/gi.test(text)) return ctx.reply(TEXTS.link_blocked);
 
-// --- CHAT ACTIONS (Typing Indicator Fixed) ---
+        // --- CHAT ACTIONS (Typing Indicator Fixed) ---
         try {
             const actionType = ctx.message.photo ? 'upload_photo' : 'typing';
             
@@ -543,6 +525,22 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
     // --- ADD THIS LINE HERE ---
     if (text === TEXTS.btn_advanced) return showAdvancedMenu(ctx);
     // --------------------------
+
+    // --- PASTE THE SHOP LOGIC HERE ---
+    if (text === TEXTS.btn_shop) {
+        const adminUser = 'dguyhimself'; // Ensure this username is correct
+        
+        return ctx.reply(TEXTS.shop_msg, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '👤 ارتباط با ادمین (خرید)', url: `https://t.me/${adminUser}` }],
+                    [{ text: '🎁 دریافت لینک دعوت (رایگان)', callback_data: 'get_ref_link' }]
+                ]
+            }
+        });
+    }
+    // --------------------------------
 
     if (text === TEXTS.btn_profile) return showProfile(ctx, user, true);
     
