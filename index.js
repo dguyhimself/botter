@@ -936,10 +936,42 @@ bot.action('reset_filters', async (ctx) => {
     await showAdvancedMenu(ctx);
 });
 
-// 4. Start the Search
+// 4. Start the Search (Fixed: Check Credits FIRST)
 bot.action('start_adv_search', async (ctx) => {
+    const user = ctx.user;
+    const COST = 10; // Cost for Advanced Search
+
+    // --- 1. Check Balance Immediately ---
+    if (user.credits < COST) {
+        const needed = COST - user.credits;
+        
+        // Prepare the Error Message
+        const errorMsg = `⚠️ <b>موجودی کافی نیست!</b>\n\n` +
+                         `💎 هزینه این جستجو: <b>${COST}</b> سکه\n` +
+                         `💰 موجودی فعلی شما: <b>${user.credits}</b> سکه\n` +
+                         `❌ کسری: <b>${needed}</b> سکه\n\n` +
+                         `👇 برای ادامه، سکه بخرید یا دوستانتان را دعوت کنید:`;
+
+        // Delete the "Advanced Menu" so it doesn't clutter the chat
+        await ctx.deleteMessage();
+
+        // Send the error with the Buy/Invite buttons
+        return ctx.reply(errorMsg, {
+            parse_mode: 'HTML',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '💳 خرید سکه (فوری)', callback_data: 'show_shop_info' }],
+                    [{ text: '🎁 دریافت لینک دعوت (رایگان)', callback_data: 'get_ref_link' }]
+                ]
+            }
+        });
+    }
+
+    // --- 2. If Balance is OK, THEN show "Searching" and proceed ---
     await ctx.deleteMessage();
     await ctx.reply('🚀 در حال جستجو با فیلترهای شما...', Markup.keyboard([['❌ لغو جستجو']]).resize());
+    
+    // Call the main search function
     return startSearch(ctx, 'advanced');
 });
 // --- VOTE ACTION (Updates Buttons Dynamically) ---
