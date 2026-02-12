@@ -6,17 +6,24 @@ const express = require('express');
 // --- CONFIGURATION ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
-const ADMIN_ID = 7786874990; // YOUR TELEGRAM ID (dguyhimself)
+const ADMIN_ID = 7786874990; // YOUR ID
 const PORT = process.env.PORT || 3000;
 
 // --- DARI TEXTS ---
 const TEXTS = {
-    intro: `🇦🇫 به ربات افغان کانکت خوش آمدید!\n🔒 امنیت شما اولویت ماست.\n👇 برای شروع، مشخصات خود را تکمیل کنید.`,
+    intro: `🇦🇫 به ربات افغان کانکت خوش آمدید!\n\nاینجا میتوانید به صورت کاملا ناشناس با هموطنان خود گپ بزنید و دوست پیدا کنید.\n\n🔒 امنیت شما اولویت ماست.\n👇 برای شروع، لطفا مشخصات خود را تکمیل کنید.`,
     main_menu_title: '🏠 منوی اصلی:',
     btn_connect: '🎲 وصل شدن به ناشناس',
     btn_profile: '👤 پروفایل من',
     btn_edit: '✏️ ویرایش پروفایل',
-    connected: `✅ **وصل شدید!**\n\n⚠️ **هشدار امنیتی:**\n۱. از ارسال لینک و تبلیغات خودداری کنید.\n۲. از توهین و ایجاد مزاحمت پرهیز کنید.\n۳. هرگونه تخلف باعث بن شدن دایمی شما میگردد.\n\n👇 شروع به چت کنید:`,
+    ask_name: '📝 لطفا نام یا لقب خود را بنویسید:',
+    ask_gender: '🚻 جنسیت خود را انتخاب کنید:',
+    ask_age: '🎂 سن خود را انتخاب کنید:',
+    ask_province: '📍 از کدام ولایت هستید؟',
+    ask_job: '💼 شغل شما چیست؟',
+    ask_purpose: '🎯 هدف شما از اینجا بودن چیست؟',
+    ask_photo: '📸 یک عکس برای پروفایل بفرستید (یا دکمه "بدون عکس" را بزنید):',
+    connected: `✅ **وصل شدید!**\n\n⚠️ **هشدار:**\n۱. ارسال لینک و آیدی ممنوع است.\n۲. ایجاد مزاحمت باعث مسدود شدن دایمی شما میگردد.\n\n👇 پیام خود را بفرستید:`,
     partner_disconnected: '🚫 طرف مقابل مکالمه را قطع کرد.',
     you_disconnected: '🚫 شما مکالمه را قطع کردید.',
     searching: '🔍 در حال جستجو... لطفا صبر کنید.',
@@ -32,12 +39,12 @@ const JOBS = ['کارگر 🛠', 'شغل آزاد 💼', 'محصل 🎓', 'بی�
 const PURPOSES = ['سرگرمی 😂', 'پیدا کردن دوست 🤝', 'درد دل 💔'];
 const AGES = Array.from({ length: 66 }, (_, i) => (i + 15).toString());
 
-// --- DATABASE SCHEMA ---
+// --- DATABASE ---
 mongoose.connect(MONGO_URI).then(() => console.log('DB Connected'));
 
 const userSchema = new mongoose.Schema({
     telegramId: { type: Number, required: true, unique: true },
-    botUserId: { type: String, unique: true }, // Internal ID like u1001
+    botUserId: String, 
     displayName: String,
     regStep: { type: String, default: 'intro' },
     isEditing: { type: Boolean, default: false },
@@ -46,7 +53,6 @@ const userSchema = new mongoose.Schema({
     status: { type: String, default: 'idle' },
     partnerId: Number,
     lastMsgId: Number,
-    // Admin & Security
     isBanned: { type: Boolean, default: false },
     muteUntil: { type: Date, default: Date.now },
     lastMsgTimestamp: { type: Number, default: 0 },
@@ -63,7 +69,7 @@ const getSearchMenu = () => Markup.keyboard([['🎲 جستجو شانسی'], ['�
 const getChatMenu = () => Markup.keyboard([['🚫 قطع مکالمه', '📄 پروفایل طرف'], ['🚩 گزارش هم‌صحبت']]).resize();
 
 async function cleanPrev(ctx) {
-    if (ctx.user.lastMsgId) {
+    if (ctx.user && ctx.user.lastMsgId) {
         try { await ctx.deleteMessage(ctx.user.lastMsgId); } catch (e) {}
     }
 }
@@ -83,15 +89,21 @@ bot.use(async (ctx, next) => {
             });
             await user.save();
         }
+
+        // Emergency ID Fix (If someone has ID as undefined)
+        if (!user.botUserId) {
+            const count = await User.countDocuments();
+            user.botUserId = `u${1000 + count + 1}`;
+            await user.save();
+        }
         
         if (user.isBanned) return ctx.reply(TEXTS.banned_msg);
         if (user.muteUntil > Date.now()) return ctx.reply(TEXTS.spam_warn);
 
-        // Spam Protection
         const now = Date.now();
         if (now - user.lastMsgTimestamp < 1500) {
             user.spamScore++;
-            if (user.spamScore > 5) {
+            if (user.spamScore > 6) {
                 user.muteUntil = new Date(now + 5 * 60000);
                 user.spamScore = 0;
                 await user.save();
@@ -106,50 +118,53 @@ bot.use(async (ctx, next) => {
     } catch (e) { console.error(e); }
 });
 
-// --- ADMIN COMMANDS ---
+// --- ADMIN PANEL ---
 bot.command('stats', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const count = await User.countDocuments();
     const active = await User.countDocuments({ status: 'chatting' });
-    ctx.reply(`📊 آمار کل: ${count}\n💬 در حال مکالمه: ${active}`);
+    ctx.reply(`📊 آمار کل کاربران: ${count}\n💬 کاربران در حال چت: ${active}`);
 });
 
 bot.command('ban', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    const id = ctx.message.text.split(' ')[1]; // u1001
+    const id = ctx.message.text.split(' ')[1];
+    if(!id) return ctx.reply('مثال: /ban u1001');
     const target = await User.findOneAndUpdate({ botUserId: id }, { isBanned: true });
-    ctx.reply(target ? `✅ کاربر ${id} مسدود شد.` : '❌ یافت نشد.');
+    ctx.reply(target ? `✅ کاربر ${id} مسدود شد.` : '❌ کاربر یافت نشد.');
 });
 
 bot.command('unban', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const id = ctx.message.text.split(' ')[1];
+    if(!id) return ctx.reply('مثال: /unban u1001');
     const target = await User.findOneAndUpdate({ botUserId: id }, { isBanned: false });
-    ctx.reply(target ? `✅ کاربر ${id} آزاد شد.` : '❌ یافت نشد.');
+    ctx.reply(target ? `✅ کاربر ${id} آزاد شد.` : '❌ کاربر یافت نشد.');
 });
 
 // --- LOGIC ---
 bot.start(async (ctx) => {
-    if (ctx.user.regStep !== 'completed') {
-        ctx.user.regStep = 'intro'; await ctx.user.save();
+    const user = ctx.user;
+    if (user.regStep !== 'completed') {
+        user.regStep = 'intro'; await user.save();
         const m = await ctx.reply(TEXTS.intro);
-        ctx.user.lastMsgId = m.message_id; await ctx.user.save();
+        user.lastMsgId = m.message_id; await user.save();
+        
         setTimeout(async () => {
             await cleanPrev(ctx);
-            ctx.user.regStep = 'name'; await ctx.user.save();
+            user.regStep = 'name'; await user.save();
             const m2 = await ctx.reply(TEXTS.ask_name, Markup.removeKeyboard());
-            ctx.user.lastMsgId = m2.message_id; await ctx.user.save();
+            user.lastMsgId = m2.message_id; await user.save();
         }, 3000);
         return;
     }
-    await ctx.reply(`سلام خوش آمدید!\nآیدی شما: ${ctx.user.botUserId}`, getMainMenu());
+    await ctx.reply(`سلام خوش آمدید!\nآیدی شما: ${user.botUserId}`, getMainMenu());
 });
 
 bot.on(['text', 'photo'], async (ctx) => {
     const user = ctx.user;
     const text = ctx.message.text || "";
 
-    // Chat Logic
     if (user.status === 'chatting' && user.partnerId) {
         if (text === '🚫 قطع مکالمه') return endChat(ctx.from.id, user.partnerId, ctx);
         if (text === '📄 پروفایل طرف') {
@@ -157,10 +172,10 @@ bot.on(['text', 'photo'], async (ctx) => {
             return showProfile(ctx, partner, false);
         }
         if (text === '🚩 گزارش هم‌صحبت') {
-            return ctx.reply('دلیل گزارش را انتخاب کنید:', Markup.inlineKeyboard([
-                [Markup.button.callback('مزاحمت / بی‌ادبی', `rep_harass_${user.partnerId}`)],
+            return ctx.reply('دلیل گزارش خود را انتخاب کنید:', Markup.inlineKeyboard([
+                [Markup.button.callback('بی‌ادبی / فحاشی', `rep_toxic_${user.partnerId}`)],
                 [Markup.button.callback('تبلیغات / لینک', `rep_ads_${user.partnerId}`)],
-                [Markup.button.callback('محتوای نامناسب', `rep_porn_${user.partnerId}`)]
+                [Markup.button.callback('محتوای غیراخلاقی', `rep_porn_${user.partnerId}`)]
             ]));
         }
 
@@ -171,26 +186,23 @@ bot.on(['text', 'photo'], async (ctx) => {
         return;
     }
 
-    // Reg Flow
     if (user.regStep !== 'completed') return stepHandler(ctx);
 
-    // Menus
     if (text === TEXTS.btn_connect) return ctx.reply(TEXTS.search_menu_title, getSearchMenu());
     if (text === TEXTS.btn_profile) return showProfile(ctx, user, true);
-    if (text === TEXTS.btn_edit) return ctx.reply('بخش مورد نظر:', Markup.keyboard([['✏️ نام', '✏️ عکس'], ['✏️ سن', '✏️ ولایت'], ['🔙 برگشت']]).resize());
+    if (text === TEXTS.btn_edit) return ctx.reply('کدام بخش را ویرایش میکنید؟', Markup.keyboard([['✏️ نام', '✏️ عکس'], ['✏️ سن', '✏️ ولایت'], ['🔙 برگشت']]).resize());
     if (text === '🎲 جستجو شانسی') return startSearch(ctx, 'random');
     if (text === '👦 جستجو پسر') return startSearch(ctx, 'boy');
     if (text === '👩 جستجو دختر') return startSearch(ctx, 'girl');
     if (text === '🔙 برگشت') return ctx.reply(TEXTS.main_menu_title, getMainMenu());
     if (text === '❌ لغو جستجو') return stopSearch(ctx);
 
-    // Edit logic (same as v7.0)
     if (text && text.startsWith('✏️')) {
         user.isEditing = true;
         const keys = {'نام':'name','عکس':'photo','سن':'age','جنسیت':'gender','ولایت':'province','شغل':'job','هدف':'purpose'};
         for (let k in keys) if (text.includes(k)) {
             user.regStep = keys[k]; await user.save();
-            if (['name','photo'].includes(keys[k])) await ctx.reply('اطلاعات جدید را بفرستید:', Markup.removeKeyboard());
+            if (['name','photo'].includes(keys[k])) await ctx.reply('لطفا مقدار جدید را بفرستید:', Markup.removeKeyboard());
             else {
                 const maps = { gender: [GENDERS, 2], age: [AGES, 6], province: [PROVINCES, 3] };
                 await ctx.reply('انتخاب کنید:', Markup.keyboard(chunk(maps[keys[k]][0], maps[keys[k]][1])).resize());
@@ -200,19 +212,11 @@ bot.on(['text', 'photo'], async (ctx) => {
     }
 });
 
-// --- REPORT ACTION ---
 bot.action(/^rep_(.*)_(\d+)$/, async (ctx) => {
     const reason = ctx.match[1];
     const targetId = ctx.match[2];
     const targetUser = await User.findOne({ telegramId: targetId });
-    
-    await bot.telegram.sendMessage(ADMIN_ID, 
-        `🚩 **گزارش جدید**\n\n` +
-        `گزارش دهنده: ${ctx.user.botUserId}\n` +
-        `متخلف: ${targetUser.botUserId}\n` +
-        `دلیل: ${reason}`
-    );
-    
+    await bot.telegram.sendMessage(ADMIN_ID, `🚩 گزارش جدید\nشاکی: ${ctx.user.botUserId}\nمتهم: ${targetUser.botUserId}\nدلیل: ${reason}`);
     await ctx.answerCbQuery(TEXTS.report_sent);
     await ctx.editMessageText(TEXTS.report_sent);
 });
@@ -224,17 +228,19 @@ async function stepHandler(ctx) {
 
     const next = async (step) => {
         await cleanPrev(ctx);
-        if (isEdit) { user.regStep = 'completed'; user.isEditing = false; await user.save(); await ctx.reply('✅ تغییرات ذخیره شد.', getMainMenu()); }
-        else {
+        if (isEdit) { 
+            user.regStep = 'completed'; user.isEditing = false; await user.save(); 
+            await ctx.reply('✅ تغییرات با موفقیت ذخیره شد.', getMainMenu()); 
+        } else {
             user.regStep = step; await user.save();
             const maps = { gender: [TEXTS.ask_gender, GENDERS, 2], age: [TEXTS.ask_age, AGES, 6], province: [TEXTS.ask_province, PROVINCES, 3], job: [TEXTS.ask_job, JOBS, 2], purpose: [TEXTS.ask_purpose, PURPOSES, 2], photo: [TEXTS.ask_photo, [['بدون عکس']], 1] };
             const s = maps[step];
             const m = await ctx.reply(s[0], step === 'name' ? Markup.removeKeyboard() : Markup.keyboard(chunk(s[1], s[2])).resize());
-            ctx.user.lastMsgId = m.message_id; await ctx.user.save();
+            user.lastMsgId = m.message_id; await user.save();
         }
     };
 
-    if (user.regStep === 'name') { if (!text) return; user.displayName = text; return next('gender'); }
+    if (user.regStep === 'name') { if (!text || text.startsWith('/')) return; user.displayName = text; return next('gender'); }
     if (user.regStep === 'gender') { if (!GENDERS.includes(text)) return; user.profile.gender = text; return next('age'); }
     if (user.regStep === 'age') { if (!AGES.includes(text)) return; user.profile.age = text; return next('province'); }
     if (user.regStep === 'province') { if (!PROVINCES.includes(text)) return; user.profile.province = text; return next('job'); }
@@ -243,13 +249,13 @@ async function stepHandler(ctx) {
     if (user.regStep === 'photo') {
         user.profile.photoId = ctx.message.photo ? ctx.message.photo[ctx.message.photo.length - 1].file_id : null;
         user.regStep = 'completed'; user.isEditing = false; await user.save();
-        await cleanPrev(ctx); await ctx.reply('🎉 پروفایل تکمیل شد!\nآیدی شما: ' + user.botUserId, getMainMenu());
+        await cleanPrev(ctx); await ctx.reply(`🎉 پروفایل شما با آیدی ${user.botUserId} ساخته شد!`, getMainMenu());
     }
 }
 
 async function showProfile(ctx, user, isSelf) {
     const p = user.profile;
-    const caption = `🎫 **آیدی: ${user.botUserId}**\n\n👤 نام: ${user.displayName}\n🚻 جنسیت: ${p.gender}\n🎂 سن: ${p.age}\n📍 ولایت: ${p.province}\n💼 شغل: ${p.job}\n🎯 هدف: ${p.purpose}`;
+    const caption = `🎫 **آیدی کاربر: ${user.botUserId}**\n\n👤 نام: ${user.displayName}\n🚻 جنسیت: ${p.gender}\n🎂 سن: ${p.age}\n📍 ولایت: ${p.province}\n💼 شغل: ${p.job}\n🎯 هدف: ${p.purpose}`;
     const buttons = { inline_keyboard: [[{ text: `👍 ${user.stats.likes}`, callback_data: `like_${user.telegramId}` }, { text: `👎 ${user.stats.dislikes}`, callback_data: `dislike_${user.telegramId}` }]] };
     if (p.photoId) await ctx.replyWithPhoto(p.photoId, { caption, reply_markup: buttons });
     else await ctx.reply(caption, { reply_markup: buttons });
@@ -259,12 +265,12 @@ async function showProfile(ctx, user, isSelf) {
 bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
     const type = ctx.match[1];
     const targetId = parseInt(ctx.match[2]);
-    if (targetId === ctx.from.id) return ctx.answerCbQuery('شما نمیتوانید به خود رای دهید.');
+    if (targetId === ctx.from.id) return ctx.answerCbQuery('نمیتوانید به خود رای دهید.');
     const target = await User.findOne({ telegramId: targetId });
     if (type === 'like') target.stats.likes++; else target.stats.dislikes++;
     await target.save();
     try { await ctx.editMessageReplyMarkup({ inline_keyboard: [[{ text: `👍 ${target.stats.likes}`, callback_data: `like_${targetId}` }, { text: `👎 ${target.stats.dislikes}`, callback_data: `dislike_${targetId}` }]] }); } catch (e) {}
-    ctx.answerCbQuery('ثبت شد');
+    ctx.answerCbQuery('انجام شد');
 });
 
 async function startSearch(ctx, type) {
@@ -283,7 +289,7 @@ async function startSearch(ctx, type) {
     }
 }
 
-async function stopSearch(ctx) { ctx.user.status = 'idle'; await ctx.user.save(); await ctx.reply('توقف شد.', getMainMenu()); }
+async function stopSearch(ctx) { ctx.user.status = 'idle'; await ctx.user.save(); await ctx.reply('جستجو متوقف شد.', getMainMenu()); }
 
 async function endChat(id1, id2, ctx) {
     await User.updateMany({ telegramId: { $in: [id1, id2] } }, { status: 'idle', partnerId: null });
@@ -291,5 +297,5 @@ async function endChat(id1, id2, ctx) {
     try { await ctx.telegram.sendMessage(id2, TEXTS.partner_disconnected, getMainMenu()); } catch (e) {}
 }
 
-const app = express(); app.get('/', (r, s) => s.send('Afghan Connect v8.0 Active'));
-app.listen(PORT, () => { bot.launch(); console.log('Bot v8.0 Professional Active'); });
+const app = express(); app.get('/', (r, s) => s.send('Afghan Connect v8.1 Ready'));
+app.listen(PORT, () => { bot.launch(); console.log('Bot v8.1 Production Active'); });
