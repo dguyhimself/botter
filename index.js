@@ -332,7 +332,52 @@ bot.command('unmute', async (ctx) => {
         await ctx.telegram.sendMessage(targetId, TEXTS.unmuted_msg); 
     } catch (e) {}
 });
+// Usage: /give 123456789 100
+bot.command('give', async (ctx) => {
+    // 1. Security Check
+    if (ctx.from.id !== ADMIN_ID) return;
 
+    // 2. Parse Data
+    const args = ctx.message.text.split(' ');
+    const targetId = parseInt(args[1]);
+    const amount = parseInt(args[2]);
+
+    // 3. Validation
+    if (!targetId || isNaN(targetId) || !amount || isNaN(amount)) {
+        return ctx.reply('❌ فرمت اشتباه است!\n✅ مثال: /give 123456789 100');
+    }
+
+    try {
+        // 4. Find User
+        const user = await User.findOne({ telegramId: targetId });
+        if (!user) return ctx.reply('❌ کاربر با این آیدی یافت نشد.');
+
+        // 5. Update Credits
+        user.credits += amount;
+        await user.save();
+
+        // 6. Confirm to Admin
+        await ctx.reply(
+            `✅ عملیات موفقیت‌آمیز بود.\n\n` +
+            `👤 کاربر: <code>${targetId}</code>\n` +
+            `➕ مقدار: ${amount} سکه\n` +
+            `💰 موجودی جدید: ${user.credits} سکه`,
+            { parse_mode: 'HTML' }
+        );
+
+        // 7. Notify the User (Professional Receipt)
+        const receiptMsg = `🎉 <b>حساب شما شارژ شد!</b>\n\n` +
+                           `➕ <b>مقدار شارژ:</b> ${amount} سکه\n` +
+                           `💰 <b>موجودی جدید:</b> ${user.credits} سکه\n\n` +
+                           `🛍 <i>از خرید و اعتماد شما سپاسگزاریم.</i>`;
+
+        await ctx.telegram.sendMessage(targetId, receiptMsg, { parse_mode: 'HTML' });
+
+    } catch (e) {
+        console.error(e);
+        ctx.reply('⚠️ سکه اضافه شد، اما نتوانستم به کاربر پیام بفرستم (شاید ربات را بلاک کرده).');
+    }
+});
 bot.command('stats', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const total = await User.countDocuments();
