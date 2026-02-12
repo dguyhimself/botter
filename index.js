@@ -625,14 +625,6 @@ async function showProfile(ctx, targetUser, isSelf) {
         } catch (e) {}
     }
 }
-
-    // 4. Notify if viewed by someone else
-    if (!isSelf) {
-        try { 
-            await ctx.telegram.sendMessage(targetUser.telegramId, TEXTS.profile_viewed); 
-        } catch (e) {}
-    }
-}
 // --- VOTE ACTION (Updates Buttons Dynamically) ---
 bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
     const type = ctx.match[1];
