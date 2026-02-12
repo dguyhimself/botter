@@ -567,23 +567,31 @@ async function stepHandler(ctx) {
     }
 }
 
-// --- PROFILE HANDLER (Added User ID) ---
+// --- PROFILE HANDLER (Professional Layout & Copyable ID) ---
 async function showProfile(ctx, targetUser, isSelf) {
     if (!targetUser) return ctx.reply('کاربر یافت نشد.');
     
     const p = targetUser.profile;
     
-    // 1. Build Caption (Added User ID line)
-    const caption = `🎫 پروفایل کاربری\n\n` +
-                    `🆔 آیدی: ${targetUser.telegramId}\n` +
-                    `👤 نام: ${targetUser.displayName || 'نامشخص'}\n` +
-                    `🚻 جنسیت: ${p.gender || '?'}\n` +
-                    `🎂 سن: ${p.age || '?'}\n` +
-                    `📍 ولایت: ${p.province || '?'}\n` +
-                    `💼 شغل: ${p.job || '?'}\n` +
-                    `🎯 هدف: ${p.purpose || '?'}`;
+    // Sanitize name to prevent HTML errors (if someone uses < or > in their name)
+    const safeName = (targetUser.displayName || 'نامشخص')
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
 
-    // 2. Build Buttons (Dynamic Numbers)
+    // Build the Caption with HTML tags
+    // <b>Text</b> makes it Bold
+    // <code>123</code> makes it Monospace (Copyable on click)
+    const caption = `🎫 <b>پروفایل کاربری</b>\n\n` +
+                    `👤 <b>نام:</b> ${safeName}\n` +
+                    `🎂 <b>سن:</b> ${p.age || '?'}\n` +
+                    `🚻 <b>جنسیت:</b> ${p.gender || '?'}\n\n` +
+                    `📍 <b>ولایت:</b> ${p.province || '?'}\n` +
+                    `💼 <b>شغل:</b> ${p.job || '?'}\n` +
+                    `🎯 <b>هدف:</b> ${p.purpose || '?'}\n\n` +
+                    `🆔 <b>آیدی:</b> <code>${targetUser.telegramId}</code>`;
+
+    // Buttons (Dynamic Numbers)
     const buttons = {
         inline_keyboard: [[
             { text: `👍 ${targetUser.stats.likes}`, callback_data: `like_${targetUser.telegramId}` },
@@ -591,17 +599,32 @@ async function showProfile(ctx, targetUser, isSelf) {
         ]]
     };
 
-    // 3. Send Message
+    // Send Message with HTML Parse Mode
     try {
         if (p.photoId) {
-            await ctx.replyWithPhoto(p.photoId, { caption, reply_markup: buttons });
+            await ctx.replyWithPhoto(p.photoId, { 
+                caption: caption, 
+                parse_mode: 'HTML', 
+                reply_markup: buttons 
+            });
         } else {
-            await ctx.reply(caption, { reply_markup: buttons });
+            await ctx.reply(caption, { 
+                parse_mode: 'HTML', 
+                reply_markup: buttons 
+            });
         }
     } catch (e) {
         console.error('Error sending profile:', e);
         ctx.reply('خطا در نمایش پروفایل.');
     }
+
+    // Notify if viewed by someone else
+    if (!isSelf) {
+        try { 
+            await ctx.telegram.sendMessage(targetUser.telegramId, TEXTS.profile_viewed); 
+        } catch (e) {}
+    }
+}
 
     // 4. Notify if viewed by someone else
     if (!isSelf) {
