@@ -68,10 +68,11 @@ const TEXTS = {
     // --- UPDATED SHOP TEXTS ---
     btn_shop: '💰 فروشگاه / دریافت سکه', // New Button Name
     shop_msg: `💎 <b>فروشگاه سکه</b>\n\n` +
-              `👇 <b>تعرفه بسته‌های سکه:</b>\n\n` +
+              `با خرید سکه، علاوه بر امکانات جستجو، نشان‌های <b>VIP</b> و <b>VVIP</b> دریافت کنید!\n\n` +
+              `👇 <b>تعرفه بسته‌ها:</b>\n\n` +
               `🥉 <b>۵۰ سکه</b> = ۵۰ افغانی\n` +
-              `🥈 <b>۱۲۰ سکه</b> = ۱۰۰ افغانی\n` +
-              `🥇 <b>۳۰۰ سکه</b> = ۲۰۰ افغانی\n\n` +
+              `🌟 <b>۱۲۰ سکه</b> = ۱۰۰ افغانی (دریافت نشان VIP)\n` +
+              `💎 <b>۳۰۰ سکه</b> = ۲۰۰ افغانی (دریافت نشان VVIP)\n\n` +
               `💳 برای خرید، روی دکمه "ارتباط با ادمین" کلیک کنید.\n` +
               `🎁 همچنین میتوانید با دعوت دوستان، سکه رایگان بگیرید.`,
 
@@ -874,32 +875,50 @@ async function stepHandler(ctx) {
     }
 }
 
-// --- PROFILE HANDLER (Professional Layout & Copyable ID) ---
 async function showProfile(ctx, targetUser, isSelf) {
-    if (!targetUser) return ctx.reply('کاربر یافت نشد.');
+    if (!targetUser) return ctx.reply('❌ کاربر یافت نشد.');
     
     const p = targetUser.profile;
     
-    // Sanitize name to prevent HTML errors (if someone uses < or > in their name)
+    // Sanitize name
     const safeName = (targetUser.displayName || 'نامشخص')
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;");
 
-    // Build the Caption with HTML tags
-    // <b>Text</b> makes it Bold
-    // <code>123</code> makes it Monospace (Copyable on click)
-    const caption = `🎫 <b>پروفایل کاربری</b>\n\n` +
-                    `💰 <b>سکه:</b> ${targetUser.credits}\n` + // <--- NEW LINE
-                    `👤 <b>نام:</b> ${safeName}\n` +
-                    `🎂 <b>سن:</b> ${p.age || '?'}\n` +
-                    `🚻 <b>جنسیت:</b> ${p.gender || '?'}\n\n` +
-                    `📍 <b>ولایت:</b> ${p.province || '?'}\n` +
-                    `💼 <b>شغل:</b> ${p.job || '?'}\n` +
-                    `🎯 <b>هدف:</b> ${p.purpose || '?'}\n\n` +
-                    `🆔 <b>آیدی:</b> <code>${targetUser.telegramId}</code>`;
+    // --- 1. DETERMINE BADGE (VIP / VVIP) ---
+    let userBadge = '👤 کاربر عادی';
+    
+    // Top Tier (300+ coins)
+    if (targetUser.credits >= 300) {
+        userBadge = '💎 <b>VVIP (Diamond)</b>'; 
+    } 
+    // Middle Tier (100+ coins)
+    else if (targetUser.credits >= 100) {
+        userBadge = '🌟 <b>VIP (Gold)</b>';
+    }
 
-    // Buttons (Dynamic Numbers)
+    // --- 2. HANDLE PRIVACY (Only show exact coins to SELF) ---
+    let balanceInfo = '';
+    if (isSelf) {
+        balanceInfo = `💰 <b>موجودی کیف پول:</b> ${targetUser.credits} سکه\n`;
+    }
+
+    // --- 3. BUILD CAPTION ---
+    const caption = `🎫 <b>پروفایل کاربری</b>\n\n` +
+                    `🔰 <b>وضعیت:</b> ${userBadge}\n` + 
+                    balanceInfo + 
+                    `➖➖➖➖➖➖➖➖➖➖\n` +
+                    `👤 <b>نام:</b> ${safeName}\n` +
+                    `🎂 <b>سن:</b> ${p.age || 'تعیین نشده'}\n` +
+                    `🚻 <b>جنسیت:</b> ${p.gender || 'تعیین نشده'}\n` +
+                    `📍 <b>ولایت:</b> ${p.province || 'تعیین نشده'}\n\n` +
+                    `💼 <b>شغل:</b> ${p.job || '---'}\n` +
+                    `🎯 <b>هدف:</b> ${p.purpose || '---'}\n` +
+                    `➖➖➖➖➖➖➖➖➖➖\n` +
+                    `🆔 <b>آیدی عددی:</b> <code>${targetUser.telegramId}</code>`;
+
+    // Buttons
     const buttons = {
         inline_keyboard: [[
             { text: `👍 ${targetUser.stats.likes}`, callback_data: `like_${targetUser.telegramId}` },
@@ -907,7 +926,7 @@ async function showProfile(ctx, targetUser, isSelf) {
         ]]
     };
 
-    // Send Message with HTML Parse Mode
+    // Send
     try {
         if (p.photoId) {
             await ctx.replyWithPhoto(p.photoId, { 
@@ -923,7 +942,7 @@ async function showProfile(ctx, targetUser, isSelf) {
         }
     } catch (e) {
         console.error('Error sending profile:', e);
-        ctx.reply('خطا در نمایش پروفایل.');
+        ctx.reply('⚠️ خطا در نمایش پروفایل.');
     }
 
     // Notify if viewed by someone else
