@@ -14,7 +14,7 @@ if (!BOT_TOKEN || !MONGO_URI || !ADMIN_ID) {
     process.exit(1);
 }
 
-// --- DARI TEXTS (Fixed & Completed) ---
+// --- DARI TEXTS ---
 const TEXTS = {
     intro: `🇦🇫 به ربات افغان کانکت خوش آمدید!\n\nاینجا میتوانید به صورت کاملا ناشناس با هموطنان خود صحبت کنید.\n🔒 امنیت: آیدی شما مخفی است.\n👇 برای شروع، مشخصات خود را تکمیل کنید.`,
     main_menu_title: '🏠 منوی اصلی:',
@@ -43,7 +43,13 @@ const TEXTS = {
     search_stopped: '🛑 جستجو متوقف شد.',
     spam_warn: '⚠️ شما خیلی سریع پیام میدهید! ۵ دقیقه محدود شدید.',
     link_blocked: '🚫 ارسال لینک یا آیدی مجاز نیست!',
-    banned_msg: '⛔️ حساب شما توسط ادمین مسدود شده است.',
+    
+    // Ban & Mute Systems (FIXED)
+    banned_msg: '⛔️ حساب شما مسدود شده است.',
+    banned_reason: '⛔️ شما بن شدید.\n📝 دلیل: ', 
+    muted_msg: '🤐 شما توسط ادمین میوت شدید.\n⏳ مدت زمان: ', 
+    unmuted_msg: '🗣 سکوت شما برداشته شد. میتوانید چت کنید.',
+    mute_error: '🤐 شما در حالت سکوت هستید.\n⏳ زمان باقی‌مانده: ', 
     profile_viewed: '👁 یک نفر پروفایل شما را مشاهده کرد.',
     self_vote: '⚠️ نمیتوانید به خودتان رای دهید!',
     
@@ -147,7 +153,12 @@ bot.use(async (ctx, next) => {
         if (user.banned) return ctx.reply(TEXTS.banned_msg);
 
         // 2. Mute Check
-        if (user.muteUntil > Date.now()) return ctx.reply(TEXTS.spam_warn);
+// 2. Mute Check (Fixed)
+        if (user.muteUntil > Date.now()) {
+            const remainingMs = user.muteUntil - Date.now();
+            const remainingMins = Math.ceil(remainingMs / 60000);
+            return ctx.reply(`${TEXTS.mute_error} ${remainingMins} دقیقه.`);
+        }
 
         // 3. Anti-Spam (Skip for Admin)
         if (ctx.from.id !== ADMIN_ID && ctx.message) {
@@ -176,9 +187,12 @@ bot.use(async (ctx, next) => {
 });
 
 // --- ADMIN COMMANDS ---
-// Usage: /ban 12345 Spamming users
+// --- ADMIN COMMANDS ---
+
+// Usage: /ban 12345 Reason
 bot.command('ban', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
+    
     const args = ctx.message.text.split(' ');
     const targetId = parseInt(args[1]);
     const reason = args.slice(2).join(' ') || 'رعایت نکردن قوانین'; // Default reason
@@ -188,13 +202,12 @@ bot.command('ban', async (ctx) => {
     // Update DB
     await User.updateOne({ telegramId: targetId }, { banned: true, status: 'idle', partnerId: null });
     
-    // Notify Admin
     ctx.reply(`✅ کاربر ${targetId} بن شد.\n📝 دلیل: ${reason}`);
 
-    // Notify User
+    // Notify User (Fixed undefined error)
     try {
-        await ctx.telegram.sendMessage(targetId, TEXTS.banned_reason + reason);
-    } catch (e) {} // User might have blocked bot
+        await ctx.telegram.sendMessage(targetId, `${TEXTS.banned_reason} ${reason}`);
+    } catch (e) {} 
 });
 
 bot.command('unban', async (ctx) => {
@@ -207,9 +220,10 @@ bot.command('unban', async (ctx) => {
     try { await ctx.telegram.sendMessage(targetId, '✅ حساب شما باز شد.'); } catch (e) {}
 });
 
-// Usage: /mute 12345 30 (Mutes for 30 mins) or /mute 12345 (Default 15 mins)
+// Usage: /mute 12345 30
 bot.command('mute', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
+    
     const args = ctx.message.text.split(' ');
     const targetId = parseInt(args[1]);
     let minutes = parseInt(args[2]);
@@ -223,9 +237,9 @@ bot.command('mute', async (ctx) => {
     
     ctx.reply(`✅ کاربر ${targetId} برای ${minutes} دقیقه میوت شد.`);
     
-    // Notify User
+    // Notify User (Fixed undefined error)
     try {
-        await ctx.telegram.sendMessage(targetId, TEXTS.muted_msg + `${minutes} دقیقه.`);
+        await ctx.telegram.sendMessage(targetId, `${TEXTS.muted_msg} ${minutes} دقیقه.`);
     } catch (e) {}
 });
 
@@ -234,11 +248,15 @@ bot.command('unmute', async (ctx) => {
     const targetId = parseInt(ctx.message.text.split(' ')[1]);
     if (!targetId) return ctx.reply('❌ آیدی وارد نشد.');
 
-    // Set muteUntil to current time or past to unmute immediately
+    // Set muteUntil to current time to unmute immediately
     await User.updateOne({ telegramId: targetId }, { muteUntil: Date.now() });
     
     ctx.reply(`✅ کاربر ${targetId} آن‌میوت شد.`);
-    try { await ctx.telegram.sendMessage(targetId, TEXTS.unmuted_msg); } catch (e) {}
+    
+    // Notify User (Fixed undefined error)
+    try { 
+        await ctx.telegram.sendMessage(targetId, TEXTS.unmuted_msg); 
+    } catch (e) {}
 });
 
 bot.command('stats', async (ctx) => {
