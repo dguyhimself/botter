@@ -209,6 +209,26 @@ const userSchema = new mongoose.Schema({
 });
 
 const User = mongoose.model('User', userSchema);
+// --- ADD THIS NOW ---
+const configSchema = new mongoose.Schema({
+    id: { type: String, default: 'global' },
+    requiredChannels: { type: [String], default: [] }
+});
+const Config = mongoose.model('Config', configSchema);
+
+// This function creates the config entry if the database is empty
+async function initConfig() {
+    try {
+        const exists = await Config.findOne({ id: 'global' });
+        if (!exists) {
+            await new Config({ id: 'global' }).save();
+            console.log('✅ Global Config Initialized');
+        }
+    } catch (e) {
+        console.error('❌ Config Init Error:', e);
+    }
+}
+initConfig();
 const bot = new Telegraf(BOT_TOKEN);
 
 // --- HELPERS ---
