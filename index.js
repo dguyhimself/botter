@@ -208,9 +208,8 @@ const getSettingsMenu = () => Markup.keyboard([
 ]).resize();
 
 const getChatMenu = () => Markup.keyboard([
-    ['🎁 ارسال هدیه', '🚫 قطع مکالمه'], // Added Gift Button
-    ['📄 مشاهده پروفایل', TEXTS.report_btn],
-    ['⛔️ بلاک کردن این کاربر'] 
+    ['🚫 قطع مکالمه', '📄 مشاهده پروفایل'], 
+    ['⛔️ بلاک کردن این کاربر', TEXTS.report_btn]
 ]).resize();
 
 const getEditMenu = () => Markup.keyboard([
@@ -806,6 +805,91 @@ bot.action('action_icebreaker', async (ctx) => {
     }
 });
 
+// --- 1. OPEN GIFT MENU ---
+bot.action(/^pre_gift_(\d+)$/, async (ctx) => {
+    const targetId = ctx.match[1]; // Get the ID of the person we are viewing
+    
+    // Config (Ensure this is defined at top of file as mentioned before)
+    // const GIFT_PRICES = { ... } 
+
+    await ctx.reply('🎁 <b>کدام هدیه را ارسال میکنید؟</b>\n\n' +
+        `هدیه‌ها در پروفایل طرف مقابل نمایش داده میشوند و نشانه محبت شماست! 👇`, {
+        parse_mode: 'HTML',
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: `🌹 گل رز (${GIFT_PRICES.rose.cost} سکه)`, callback_data: `send_gift_${targetId}_rose` }
+                ],
+                [
+                    { text: `💎 الماس (${GIFT_PRICES.diamond.cost} سکه)`, callback_data: `send_gift_${targetId}_diamond` }
+                ],
+                [
+                    { text: `🏆 جام طلایی (${GIFT_PRICES.trophy.cost} سکه)`, callback_data: `send_gift_${targetId}_trophy` }
+                ],
+                [{ text: '🔙 لغو', callback_data: 'delete_msg' }]
+            ]
+        }
+    });
+    await ctx.answerCbQuery();
+});
+
+// Helper to delete message
+bot.action('delete_msg', async (ctx) => {
+    await ctx.deleteMessage();
+});
+
+// --- 2. PROCESS GIFT TRANSACTION ---
+bot.action(/^send_gift_(\d+)_(.*)$/, async (ctx) => {
+    const targetId = parseInt(ctx.match[1]); // The person receiving
+    const type = ctx.match[2]; // rose, diamond, trophy
+    const user = ctx.user;
+
+    // 1. Validation
+    if (!GIFT_PRICES[type]) return ctx.answerCbQuery('❌ هدیه نامعتبر است.');
+    
+    // Prevent gifting yourself (just in case)
+    if (user.telegramId === targetId) return ctx.answerCbQuery('نمیتوانید به خودتان هدیه دهید!');
+
+    const item = GIFT_PRICES[type];
+
+    // 2. Check Balance
+    if (user.credits < item.cost) {
+        return ctx.answerCbQuery(`❌ سکه کافی نیست! نیاز به ${item.cost} سکه دارید.`, { show_alert: true });
+    }
+
+    try {
+        // 3. Deduct from sender
+        user.credits -= item.cost;
+        await user.save();
+
+        // 4. Add to target
+        const targetUser = await User.findOne({ telegramId: targetId });
+        if (targetUser) {
+            targetUser.gifts[type] = (targetUser.gifts[type] || 0) + 1;
+            await targetUser.save();
+
+            // Notify Target
+            const receiveMsg = `🎁 <b>تبریک!</b>\n\n` +
+                               `کاربری به شما یک <b>${item.name} ${item.icon}</b> هدیه داد!\n` +
+                               `این هدیه به پروفایل شما اضافه شد.`;
+            
+            try {
+                await ctx.telegram.sendMessage(targetId, receiveMsg, { parse_mode: 'HTML' });
+            } catch (e) {
+                // Target blocked bot, ignore
+            }
+        }
+
+        // 5. Success Message & Close Menu
+        await ctx.deleteMessage(); 
+        await ctx.reply(`✅ <b>${item.icon} با موفقیت ارسال شد!</b>\n💰 ${item.cost} سکه کسر گردید.`, { parse_mode: 'HTML' });
+
+    } catch (e) {
+        console.error('Gift Error:', e);
+        ctx.reply('⚠️ خطا در انجام عملیات.');
+    }
+});
+
 // --- GIFTING SYSTEM LOGIC ---
 bot.action(/^gift_(.*)$/, async (ctx) => {
     const type = ctx.match[1]; // rose, diamond, or trophy
@@ -1038,12 +1122,22 @@ async function showProfile(ctx, targetUser, isSelf) {
                     `➖➖➖➖➖➖➖➖➖➖\n` +
                     `🆔 <b>آیدی عددی:</b> <code>${targetUser.telegramId}</code>`;
 
-    const buttons = {
-        inline_keyboard: [[
+    // Define Buttons
+    let inlineRows = [
+        [
             { text: `👍 ${targetUser.stats.likes}`, callback_data: `like_${targetUser.telegramId}` },
             { text: `👎 ${targetUser.stats.dislikes}`, callback_data: `dislike_${targetUser.telegramId}` }
-        ]]
-    };
+        ]
+    ];
+
+    // Only add Gift button if looking at someone else
+    if (!isSelf) {
+        inlineRows.push([
+            { text: '🎁 اهدای هدیه (Rose/Gem/Trophy)', callback_data: `pre_gift_${targetUser.telegramId}` }
+        ]);
+    }
+
+    const buttons = { inline_keyboard: inlineRows };
 
     try {
         if (p.photoId) {
