@@ -82,7 +82,7 @@ const TEXTS = {
     shop_msg: `💎 <b>فروشگاه سکه و امکانات ویژه</b>\n\n` +
               `💰 <b>چرا سکه داشته باشم؟</b>\n` +
               `با داشتن سکه، قفل قابلیت‌های جذاب ربات باز میشود:\n\n` +
-              `🔍 <b>جستجوی دقیق:</b> انتخاب هم‌صحبت بر اساس جنسیت (پسر/دختر) و ولایت.\n` +
+              `🔍 <b>جستجوی دقیق:</b> ...انتخاب هم‌صحبت بر اساس جنسیت (پسر/دختر), ولایت.\n` +
               `💌 <b>پیام مستقیم:</b> ارسال پیام خصوصی به هر کاربری بدون نیاز به وصل شدن.\n` +
               `🎁 <b>ارسال هدایا:</b> با فرستادن گل و الماس، طرف مقابل را تحت تأثیر قرار دهید.\n` +
               `👁 <b>لیست علاقه‌مندان:</b> مشاهده لیست کسانی که پروفایل شما را لایک کرده‌اند (مخصوص VIP).\n` +
@@ -1339,64 +1339,79 @@ async function showProfile(ctx, targetUser, isSelf) {
     const p = targetUser.profile;
     
     // Sanitize name to prevent HTML injection
-    const safeName = (targetUser.displayName || 'نامشخص')
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
+    const rawName = targetUser.displayName || 'ناشناس';
+    const safeName = rawName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-    // --- 1. DETERMINE BADGE (VIP / VVIP) ---
-    let userBadge = '👤 کاربر عادی';
-    
-    // Top Tier (300+ coins)
-    if (targetUser.credits >= 300) {
-        userBadge = '💎 <b>VVIP (Diamond)</b>'; 
+    // --- 1. DETERMINE TIER ---
+    let tier = 'standard';
+    if (targetUser.credits >= 300) tier = 'vvip';
+    else if (targetUser.credits >= 120) tier = 'vip';
+
+    // --- 2. BUILD VISUALS BASED ON TIER ---
+    let caption = '';
+
+    // A. VVIP DESIGN (Diamond/Luxury)
+    if (tier === 'vvip') {
+        caption += `💎 <b>V V I P  •  M E M B E R</b> 💎\n`;
+        caption += `▫️─────────────────▫️\n`;
+        caption += `💠 <b>نام:</b> ${safeName} ☑️\n`; // Verified Check
+        caption += `💠 <b>سن:</b> ${p.age || '?'} ساله\n`;
+        caption += `💠 <b>استان:</b> ${p.province || '?'}\n\n`;
+        
+        caption += `💼 <b>شغل:</b> ${p.job || '---'}\n`;
+        caption += `🎯 <b>هدف:</b> ${p.purpose || '---'}\n`;
+        caption += `▫️─────────────────▫️\n`;
+        
+        // VVIP Exclusive Footer
+        caption += `🆔 <code>${targetUser.telegramId}</code> | 👑 <b>Premium Account</b>`;
     } 
-    // Middle Tier (100+ coins)
-    else if (targetUser.credits >= 100) {
-        userBadge = '🌟 <b>VIP (Gold)</b>';
-    }
-
-    // --- 2. GIFTS DISPLAY (Updated Hierarchy) ---
-    let giftsDisplay = '';
-    const g = targetUser.gifts || {};
     
-    // Check if they have ANY gifts (using new keys)
-    const hasGifts = (g.rose > 0 || g.diamond > 0 || g.crown > 0);
-
-    if (hasGifts) {
-        giftsDisplay += `💎 <b>ویترین هدایا:</b>\n`; 
+    // B. VIP DESIGN (Gold/Star)
+    else if (tier === 'vip') {
+        caption += `🌟 <b>VIP MEMBER</b> 🌟\n`;
+        caption += `➖➖➖➖➖➖➖➖➖➖\n`;
+        caption += `🔸 <b>نام:</b> ${safeName} ✅\n`;
+        caption += `🔸 <b>سن:</b> ${p.age || '?'} ساله\n`;
+        caption += `🔸 <b>استان:</b> ${p.province || '?'}\n\n`;
         
-        // Order: Diamond (Top) -> Crown -> Rose
-        if (g.diamond > 0) giftsDisplay += `💎 <b>${g.diamond}</b> الماس\n`;
-        if (g.crown > 0)   giftsDisplay += `👑 <b>${g.crown}</b> تاج\n`;
-        if (g.rose > 0)    giftsDisplay += `🌹 <b>${g.rose}</b> گل رز\n`;
-        
-        giftsDisplay += `➖➖➖➖➖➖➖➖➖➖\n`;
+        caption += `🔸 <b>شغل:</b> ${p.job || '---'}\n`;
+        caption += `🔸 <b>هدف:</b> ${p.purpose || '---'}\n`;
+        caption += `➖➖➖➖➖➖➖➖➖➖\n`;
+        caption += `🆔 <code>${targetUser.telegramId}</code>`;
+    } 
+    
+    // C. STANDARD DESIGN (Clean/Simple)
+    else {
+        caption += `👤 <b>پروفایل کاربری</b>\n`;
+        caption += `➖➖➖➖➖➖➖➖\n`;
+        caption += `▫️ <b>نام:</b> ${safeName}\n`;
+        caption += `▫️ <b>سن:</b> ${p.age || '?'}\n`;
+        caption += `▫️ <b>استان:</b> ${p.province || '?'}\n\n`;
+        caption += `▫️ <b>شغل:</b> ${p.job || '---'}\n`;
+        caption += `▫️ <b>هدف:</b> ${p.purpose || '---'}\n`;
+        caption += `➖➖➖➖➖➖➖➖\n`;
+        caption += `🆔 <code>${targetUser.telegramId}</code>`;
     }
 
-    // --- 3. HANDLE PRIVACY (Only show exact coins to SELF) ---
-    let balanceInfo = '';
+    // --- 3. INJECT EXTRAS (Balance & Gifts) ---
+    // We add these to the TOP or MIDDLE regardless of design
+    
+    // Gifts Section (If they have any)
+    const g = targetUser.gifts || {};
+    if (g.rose > 0 || g.diamond > 0 || g.crown > 0) {
+        let giftStr = `\n\n🎁 <b>ویترین هدایا:</b>\n`;
+        if (g.diamond > 0) giftStr += `💎 ${g.diamond} `;
+        if (g.crown > 0)   giftStr += `👑 ${g.crown} `;
+        if (g.rose > 0)    giftStr += `🌹 ${g.rose} `;
+        caption += giftStr;
+    }
+
+    // Balance (Only visible to self)
     if (isSelf) {
-        balanceInfo = `💰 <b>موجودی:</b> ${targetUser.credits} سکه\n`;
+        caption += `\n\n💰 <b>موجودی شما:</b> ${targetUser.credits} سکه`;
     }
 
-    // --- 4. BUILD CAPTION ---
-    const caption = `🎫 <b>پروفایل کاربری</b>\n` +
-                    `🔰 <b>وضعیت:</b> ${userBadge}\n` + 
-                    balanceInfo + 
-                    `➖➖➖➖➖➖➖➖➖➖\n` +
-                    giftsDisplay + // <--- Gifts appear here
-                    `👤 <b>نام:</b> ${safeName}\n` +
-                    `🎂 <b>سن:</b> ${p.age || 'تعیین نشده'}\n` +
-                    `🚻 <b>جنسیت:</b> ${p.gender || 'تعیین نشده'}\n` +
-                    `📍 <b>ولایت:</b> ${p.province || 'تعیین نشده'}\n\n` +
-                    `💼 <b>شغل:</b> ${p.job || '---'}\n` +
-                    `🎯 <b>هدف:</b> ${p.purpose || '---'}\n` +
-                    `➖➖➖➖➖➖➖➖➖➖\n` +
-                    `🆔 <b>آیدی عددی:</b> <code>${targetUser.telegramId}</code>`;
-
-    // --- 5. BUILD BUTTONS ---
-    // --- 5. BUILD BUTTONS ---
+    // --- 4. BUILD BUTTONS ---
     let inlineRows = [
         [
             { text: `👍 ${targetUser.stats.likes}`, callback_data: `like_${targetUser.telegramId}` },
@@ -1405,10 +1420,9 @@ async function showProfile(ctx, targetUser, isSelf) {
     ];
 
     if (!isSelf) {
-        // CHECK: Are we currently connected to this specific user?
+        // Only show DM button if NOT chatting with them
         const isChattingWithTarget = (ctx.user.status === 'chatting' && ctx.user.partnerId === targetUser.telegramId);
 
-        // Only show DM button if NOT chatting with them
         if (!isChattingWithTarget) {
             inlineRows.push([
                 { text: '📩 پیام مستقیم (۵۰ سکه)', callback_data: `dm_prep_${targetUser.telegramId}` }
@@ -1422,7 +1436,7 @@ async function showProfile(ctx, targetUser, isSelf) {
 
     const buttons = { inline_keyboard: inlineRows };
 
-    // Send
+    // --- 5. SEND ---
     try {
         if (p.photoId) {
             await ctx.replyWithPhoto(p.photoId, { 
@@ -1448,7 +1462,6 @@ async function showProfile(ctx, targetUser, isSelf) {
         } catch (e) {}
     }
 }
-
 
 async function showAdvancedMenu(ctx) {
     const f = ctx.user.searchFilters;
