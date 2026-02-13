@@ -1263,29 +1263,50 @@ async function stepHandler(ctx) {
         return next('photo'); 
     }
     
-    if (user.regStep === 'photo') {
+if (user.regStep === 'photo') {
         if (text === TEXTS.no_photo_btn) {
             user.profile.photoId = null;
         } else if (ctx.message.photo) {
-            // --- SMART RESIZE LOGIC ---
-            // Telegram sends multiple sizes: [small, medium, large, original]
-            // We want the version closest to 800px width (Standard HD)
-            // This prevents massive 4K files from being saved.
             
-            const desiredWidth = 800; // The perfect size for mobile/desktop
-            const photos = ctx.message.photo;
+            // --- 1. GET DIMENSIONS ---
+            // Telegram sends an array of sizes. The last one is the original/largest.
+            const largestPhoto = ctx.message.photo[ctx.message.photo.length - 1];
+            const width = largestPhoto.width;
+            const height = largestPhoto.height;
+            const ratio = width / height;
 
-            // Find the photo closest to 800px
-            const bestPhoto = photos.reduce((prev, curr) => {
+            // --- 2. VALIDATION LOGIC ---
+            
+            // Check A: Is it too small? (Blurry)
+            if (width < 200 || height < 200) {
+                return ctx.reply('⚠️ <b>کیفیت عکس خیلی پایین است!</b>\nلطفا یک عکس با کیفیت‌تر ارسال کنید.', { parse_mode: 'HTML' });
+            }
+
+            // Check B: Is it too long/tall? (Like a phone screenshot)
+            // Ratio < 0.7 means it is very thin and tall
+            if (ratio < 0.75) {
+                return ctx.reply('⚠️ <b>عکس خیلی دراز است!</b> (مثل اسکرین‌شات)\n\nلطفا یک عکس <b>مربعی (1:1)</b> یا <b>پرتره معمولی</b> بفرستید.\nربات عکس‌های تمام‌صفحه و دراز را قبول نمیکند.', { parse_mode: 'HTML' });
+            }
+
+            // Check C: Is it too wide? (Like a banner)
+            // Ratio > 1.4 means it is very wide
+            if (ratio > 1.4) {
+                 return ctx.reply('⚠️ <b>عکس خیلی عریض است!</b>\nلطفا یک عکس <b>مربعی</b> یا <b>ایستاده</b> بفرستید.', { parse_mode: 'HTML' });
+            }
+
+            // --- 3. SAVE THE PHOTO (If it passed checks) ---
+            const desiredWidth = 800; 
+            const bestPhoto = ctx.message.photo.reduce((prev, curr) => {
                 return (Math.abs(curr.width - desiredWidth) < Math.abs(prev.width - desiredWidth) ? curr : prev);
             });
 
             user.profile.photoId = bestPhoto.file_id;
-            // ---------------------------
+            
         } else {
             return ctx.reply('لطفا عکس ارسال کنید یا دکمه "بدون عکس" را بزنید.');
         }
 
+        // Finalize Registration/Edit
         user.regStep = 'completed'; 
         user.isEditing = false; 
         await user.save();
