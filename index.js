@@ -1123,7 +1123,7 @@ async function showProfile(ctx, targetUser, isSelf) {
     }
 
     // --- 4. BUILD CAPTION ---
-    const caption = `🎫 <b>پروفایل کاربری</b>\n\n` +
+    const caption = `🎫 <b>پروفایل کاربری</b>\n` +
                     `🔰 <b>وضعیت:</b> ${userBadge}\n` + 
                     balanceInfo + 
                     `➖➖➖➖➖➖➖➖➖➖\n` +
