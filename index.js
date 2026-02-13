@@ -24,7 +24,7 @@ const TEXTS = {
            `🔒 <b>امنیت کامل:</b> چت‌ها کاملا محرمانه و ناشناس هستند.\n` +
            `💎 <b>سطح کاربری:</b> ارتقا به VIP و الماس برای تمایز.\n` +
            `🎯 <b>جستجوی هوشمند:</b> پیدا کردن هم‌صحبت بر اساس ولایت و جنسیت.\n\n` +
-           `👇 <b>برای شروع ماجراجویی، پروفایل خود را تکمیل کنید:</b>`,
+           `👇 <b>برای شروع، پروفایل خود را تکمیل کنید:</b>`,
     main_menu_title: '🏠 منوی اصلی:',
     search_menu_title: '🧐 نوع جستجو را انتخاب کنید:',
     
@@ -101,9 +101,9 @@ const TEXTS = {
 
 // --- GIFT CONFIGURATION ---
 const GIFT_PRICES = {
-    rose: { cost: 50, icon: '🌹', name: 'گل رز' },
-    diamond: { cost: 200, icon: '💎', name: 'الماس' },
-    trophy: { cost: 500, icon: '🏆', name: 'جام طلایی' }
+    rose:    { cost: 50,  icon: '🌹', name: 'گل رز' },
+    crown:   { cost: 200, icon: '👑', name: 'تاج' }, // Replaces Trophy (Mid Tier)
+    diamond: { cost: 500, icon: '💎', name: 'الماس' }       // Most Expensive (Top Tier)
 };
 
 const ICEBREAKERS = [
@@ -180,8 +180,8 @@ const userSchema = new mongoose.Schema({
     // --- NEW: GIFTS SYSTEM ---
     gifts: {
         rose: { type: Number, default: 0 },
-        diamond: { type: Number, default: 0 },
-        trophy: { type: Number, default: 0 }
+        crown: { type: Number, default: 0 },   // Changed from 'trophy'
+        diamond: { type: Number, default: 0 }
     },
     // -------------------------
     blockedUsers: { type: [Number], default: [] },
@@ -926,10 +926,10 @@ bot.action(/^pre_gift_(\d+)$/, async (ctx) => {
                     { text: `🌹 گل رز (${GIFT_PRICES.rose.cost} سکه)`, callback_data: `send_gift_${targetId}_rose` }
                 ],
                 [
-                    { text: `💎 الماس (${GIFT_PRICES.diamond.cost} سکه)`, callback_data: `send_gift_${targetId}_diamond` }
+                    { text: `👑 تاج (${GIFT_PRICES.crown.cost} سکه)`, callback_data: `send_gift_${targetId}_crown` }
                 ],
                 [
-                    { text: `🏆 جام طلایی (${GIFT_PRICES.trophy.cost} سکه)`, callback_data: `send_gift_${targetId}_trophy` }
+                    { text: `💎 الماس (${GIFT_PRICES.diamond.cost} سکه)`, callback_data: `send_gift_${targetId}_diamond` }
                 ],
                 [{ text: '🔙 لغو', callback_data: 'delete_msg' }]
             ]
@@ -1203,19 +1203,19 @@ async function showProfile(ctx, targetUser, isSelf) {
         userBadge = '🌟 <b>VIP (Gold)</b>';
     }
 
-    // --- 2. GIFTS DISPLAY (THE STATUS PART) ---
+    // --- 2. GIFTS DISPLAY (Updated Hierarchy) ---
     let giftsDisplay = '';
     const g = targetUser.gifts || {};
     
-    // Check if they have ANY gifts
-    const hasGifts = (g.rose > 0 || g.diamond > 0 || g.trophy > 0);
+    // Check if they have ANY gifts (using new keys)
+    const hasGifts = (g.rose > 0 || g.diamond > 0 || g.crown > 0);
 
     if (hasGifts) {
-        // CHANGED: From "کلکسیون افتخارات" to "ویترین هدایا" (Gift Showcase)
-        giftsDisplay += `🎁 <b>ویترین هدایا:</b>\n`; 
+        giftsDisplay += `💎 <b>ویترین هدایا:</b>\n`; 
         
-        if (g.trophy > 0) giftsDisplay += `🏆 <b>${g.trophy}</b> جام طلایی\n`;
+        // Order: Diamond (Top) -> Crown -> Rose
         if (g.diamond > 0) giftsDisplay += `💎 <b>${g.diamond}</b> الماس\n`;
+        if (g.crown > 0)   giftsDisplay += `👑 <b>${g.crown}</b> تاج\n`;
         if (g.rose > 0)    giftsDisplay += `🌹 <b>${g.rose}</b> گل رز\n`;
         
         giftsDisplay += `➖➖➖➖➖➖➖➖➖➖\n`;
