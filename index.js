@@ -1259,7 +1259,7 @@ bot.action('check_subscription', async (ctx) => {
 
     if (allJoined) {
         await ctx.deleteMessage(); // Remove the "Join" message
-        await ctx.reply('✅ ممنون از حمایت شما! حالا میتوانید وصل شوید.', getMainMenu());
+        await ctx.reply('✅ تشکر از حمایت شما! حالا میتوانید وصل شوید.', getMainMenu());
     } else {
         await ctx.answerCbQuery('❌ شما هنوز در تمام کانال‌ها عضو نشده‌اید!', { show_alert: true });
     }
