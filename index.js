@@ -171,7 +171,11 @@ const userSchema = new mongoose.Schema({
     searchGender: { type: String, default: 'all' }, // <--- ADD THIS LINE HERE
     credits: { type: Number, default: 0 },
     invitedBy: { type: Number },
-    stats: { likes: { type: Number, default: 0 }, dislikes: { type: Number, default: 0 } },
+    stats: { 
+        likes: { type: Number, default: 0 }, 
+        dislikes: { type: Number, default: 0 },
+        likedBy: { type: [Number], default: [] } // Stores IDs of people who liked
+    },
     // --- NEW: GIFTS SYSTEM ---
     gifts: {
         rose: { type: Number, default: 0 },
@@ -203,6 +207,7 @@ const getMainMenu = () => Markup.keyboard([
 ]).resize();
 
 const getSettingsMenu = () => Markup.keyboard([
+    ['❤️ چه کسانی مرا لایک کردند؟'], // New Premium Button
     [TEXTS.blocked_list],
     [TEXTS.btn_back]
 ]).resize();
@@ -500,7 +505,72 @@ bot.start(async (ctx) => {
         ctx.user.lastMsgId = m2.message_id; await ctx.user.save();
     }, 3000);
 });
+// --- WHO LIKED ME (PREMIUM FEATURE) ---
+bot.hears('❤️ چه کسانی مرا لایک کردند؟', async (ctx) => {
+    const user = ctx.user;
 
+    // 1. Check VIP Status (Must have > 100 coins or be VIP)
+    // You can adjust this number (e.g., 120 for VIP)
+    const REQUIRED_COINS = 100; 
+    
+    if (user.credits < REQUIRED_COINS) {
+        return ctx.reply(
+            `🔒 <b>این قابلیت مخصوص کاربران VIP است!</b>\n\n` +
+            `برای مشاهده لیست افرادی که شما را لایک کرده‌اند، باید حساب VIP داشته باشید (حداقل ${REQUIRED_COINS} سکه موجودی).\n\n` +
+            `💎 <b>مزایای VIP:</b>\n` +
+            `✅ مشاهده لیست لایک‌کنندگان\n` +
+            `✅ نشان ویژه در پروفایل\n` +
+            `✅ اولویت در جستجو\n\n` +
+            `👇 جهت خرید سکه یا دریافت رایگان اقدام کنید:`, 
+            {
+                parse_mode: 'HTML',
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '💳 خرید سکه (ارتقا به VIP)', callback_data: 'show_shop_info' }],
+                        [{ text: '🎁 دریافت سکه رایگان', callback_data: 'get_ref_link' }]
+                    ]
+                }
+            }
+        );
+    }
+
+    // 2. Fetch Likers
+    const likerIds = user.stats.likedBy;
+    
+    if (!likerIds || likerIds.length === 0) {
+        return ctx.reply('💔 هنوز کسی شما را لایک نکرده است.');
+    }
+
+    // Limit to last 10 people to avoid lag
+    const recentLikers = likerIds.slice(-10).reverse(); 
+    
+    // Find these users in DB to get their names
+    const profiles = await User.find({ telegramId: { $in: recentLikers } });
+
+    if (profiles.length === 0) {
+        return ctx.reply('💔 لیست لایک‌کنندگان در دسترس نیست.');
+    }
+
+    // 3. Create List with Buttons
+    let msg = `😍 <b>لیست طرفداران شما (VIP):</b>\n\n` +
+              `👇 برای مشاهده پروفایل کامل، روی نام کلیک کنید:`;
+
+    const buttons = [];
+    profiles.forEach(p => {
+        // Sanitize Name
+        const name = p.displayName || 'کاربر ناشناس';
+        // Create a button for each person: "Name | Age | Province"
+        const btnText = `${name} (${p.profile.age || '?'} ساله - ${p.profile.province || '?'})`;
+        
+        // Add button that triggers view_profile
+        buttons.push([Markup.button.callback(btnText, `view_profile_${p.telegramId}`)]);
+    });
+
+    await ctx.reply(msg, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons }
+    });
+});
 // We add sticker, animation (GIFs), video, and voice to the list so the bot detects them
 bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) => {
     const user = ctx.user;
@@ -655,6 +725,8 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
     }
     // --------------------------------
 
+    
+
     if (text === TEXTS.btn_profile) return showProfile(ctx, user, true);
     
     if (text === TEXTS.btn_edit) return ctx.reply('بخش مورد نظر را انتخاب کنید:', getEditMenu());
@@ -735,6 +807,38 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
             return;
         }
     }
+});
+
+// --- VIEW SPECIFIC PROFILE HANDLER ---
+
+// 1. Handle Button Click from "Who Liked Me" list
+bot.action(/^view_profile_(\d+)$/, async (ctx) => {
+    const targetId = parseInt(ctx.match[1]);
+    const targetUser = await User.findOne({ telegramId: targetId });
+    
+    // Use true/false depending on if you want them to see the "Gift" button
+    // Here we pass 'false' for isSelf so they can gift them back!
+    await showProfile(ctx, targetUser, false); 
+    await ctx.answerCbQuery();
+});
+
+// 2. Handle Command: /profile 123456
+bot.command('profile', async (ctx) => {
+    const args = ctx.message.text.split(' ');
+    const targetId = parseInt(args[1]);
+
+    if (!targetId || isNaN(targetId)) {
+        return ctx.reply('❌ فرمت اشتباه است.\n✅ مثال: /profile 123456789');
+    }
+
+    const targetUser = await User.findOne({ telegramId: targetId });
+    if (!targetUser) {
+        return ctx.reply('❌ کاربر با این آیدی در ربات یافت نشد.');
+    }
+
+    // Check if it's the user themselves
+    const isSelf = (targetId === ctx.from.id);
+    await showProfile(ctx, targetUser, isSelf);
 });
 
 // --- UNBLOCK ACTION ---
@@ -1276,23 +1380,33 @@ bot.action('start_adv_search', async (ctx) => {
     return startSearch(ctx, 'advanced');
 });
 // --- VOTE ACTION (Updates Buttons Dynamically) ---
+// --- VOTE ACTION (Updated for "Who Liked Me") ---
 bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
     const type = ctx.match[1];
     const targetId = parseInt(ctx.match[2]);
-    
+    const voterId = ctx.from.id;
+
     // Prevent self-voting
-    if (targetId === ctx.from.id) return ctx.answerCbQuery(TEXTS.self_vote);
+    if (targetId === voterId) return ctx.answerCbQuery(TEXTS.self_vote);
     
     const target = await User.findOne({ telegramId: targetId });
     if (!target) return ctx.answerCbQuery('کاربر یافت نشد');
 
     // Update Stats
-    if (type === 'like') target.stats.likes++; 
-    else target.stats.dislikes++;
+    if (type === 'like') {
+        target.stats.likes++;
+        
+        // Add voter to list if not already there
+        if (!target.stats.likedBy.includes(voterId)) {
+            target.stats.likedBy.push(voterId);
+        }
+    } else {
+        target.stats.dislikes++;
+    }
     
     await target.save();
 
-    // Update the Buttons with new numbers
+    // Update the Buttons
     try {
         await ctx.editMessageReplyMarkup({
             inline_keyboard: [[
@@ -1300,13 +1414,10 @@ bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
                 { text: `👎 ${target.stats.dislikes}`, callback_data: `dislike_${targetId}` }
             ]]
         });
-    } catch (e) {
-        // Ignore error if user clicks too fast (Telegram complains if content hasn't changed)
-    }
+    } catch (e) {}
 
     ctx.answerCbQuery('نظر شما ثبت شد');
 });
-
 async function startSearch(ctx, type) {
     const userId = ctx.from.id;
     
