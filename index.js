@@ -1107,7 +1107,7 @@ async function showProfile(ctx, targetUser, isSelf) {
 
     if (hasGifts) {
         // CHANGED: From "کلکسیون افتخارات" to "ویترین هدایا" (Gift Showcase)
-        giftsDisplay += `💎 <b>ویترین هدایا:</b>\n`; 
+        giftsDisplay += `🎁 <b>ویترین هدایا:</b>\n`; 
         
         if (g.trophy > 0) giftsDisplay += `🏆 <b>${g.trophy}</b> جام طلایی\n`;
         if (g.diamond > 0) giftsDisplay += `💎 <b>${g.diamond}</b> الماس\n`;
