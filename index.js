@@ -1167,7 +1167,21 @@ async function stepHandler(ctx) {
         if (text === TEXTS.no_photo_btn) {
             user.profile.photoId = null;
         } else if (ctx.message.photo) {
-            user.profile.photoId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
+            // --- SMART RESIZE LOGIC ---
+            // Telegram sends multiple sizes: [small, medium, large, original]
+            // We want the version closest to 800px width (Standard HD)
+            // This prevents massive 4K files from being saved.
+            
+            const desiredWidth = 800; // The perfect size for mobile/desktop
+            const photos = ctx.message.photo;
+
+            // Find the photo closest to 800px
+            const bestPhoto = photos.reduce((prev, curr) => {
+                return (Math.abs(curr.width - desiredWidth) < Math.abs(prev.width - desiredWidth) ? curr : prev);
+            });
+
+            user.profile.photoId = bestPhoto.file_id;
+            // ---------------------------
         } else {
             return ctx.reply('لطفا عکس ارسال کنید یا دکمه "بدون عکس" را بزنید.');
         }
@@ -1178,7 +1192,6 @@ async function stepHandler(ctx) {
         await cleanPrev(ctx); 
         await ctx.reply('🎉 پروفایل تکمیل شد!', getMainMenu());
     }
-}
 
 async function showProfile(ctx, targetUser, isSelf) {
     if (!targetUser) return ctx.reply('❌ کاربر یافت نشد.');
