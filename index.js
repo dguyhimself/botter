@@ -230,8 +230,18 @@ bot.use(async (ctx, next) => {
             await user.save(); 
         }
         
-        // 1. Ban Check
-        if (user.banned) return ctx.reply(TEXTS.banned_msg);
+        // 1. Ban Check (FIXED: Admin is immune)
+        if (user.banned) {
+            // If it is the Admin, auto-unban them immediately
+            if (ctx.from.id === ADMIN_ID) {
+                user.banned = false;
+                await user.save();
+                await ctx.reply('🔓 ادمین گرامی، شما از حالت بن خارج شدید.');
+            } else {
+                // If it's a normal user, stop them
+                return ctx.reply(TEXTS.banned_msg);
+            }
+        }
 
         // 2. Mute Check
         if (user.muteUntil > Date.now()) {
@@ -278,6 +288,12 @@ bot.command('ban', async (ctx) => {
     const reason = args.slice(2).join(' ') || 'رعایت نکردن قوانین'; // Default reason
 
     if (!targetId) return ctx.reply('❌ فرمت: /ban [ID] [Reason]');
+
+    // --- PREVENT BANNING ADMIN ---
+    if (targetId === ADMIN_ID) {
+        return ctx.reply('😳 شما نمیتوانید ادمین (خودتان) را بن کنید!');
+    }
+    // -----------------------------
     
     // Update DB
     await User.updateOne({ telegramId: targetId }, { banned: true, status: 'idle', partnerId: null });
