@@ -32,6 +32,10 @@ const TEXTS = {
     btn_profile: '👤 پروفایل من',
     btn_edit: '✏️ ویرایش پروفایل',
     btn_back: '🔙 برگشت',
+
+    dm_intro: '📝 <b>ارسال پیام مستقیم</b>\n\nشما در حال ارسال پیام به این کاربر هستید. هزینه ارسال این پیام <b>۵۰ سکه</b> است.\n\n👇 پیام خود را بنویسید:',
+    dm_success: '✅ پیام شما با موفقیت ارسال شد و ۵۰ سکه کسر گردید.',
+    dm_received: '📩 <b>یک پیام مستقیم دریافت کردید!</b>\n\n👤 از طرف: ',
     
     // Registration
     ask_name: '📝 لطفا نام یا لقب خود را بنویسید:',
@@ -582,6 +586,50 @@ bot.hears('❤️ چه کسانی مرا لایک کردند؟', async (ctx) => 
 bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) => {
     const user = ctx.user;
     const text = ctx.message.text || "";
+
+    // --- DIRECT MESSAGE SENDING LOGIC ---
+    if (user.regStep && user.regStep.startsWith('dm_sending_')) {
+        if (text === '🔙 انصراف') {
+            user.regStep = 'completed';
+            await user.save();
+            return ctx.reply('❌ ارسال پیام لغو شد.', getMainMenu());
+        }
+
+        const targetId = user.regStep.split('_')[2];
+
+        // Final check for coins
+        if (user.credits < 50) {
+            user.regStep = 'completed';
+            await user.save();
+            return ctx.reply('⚠️ موجودی سکه شما تمام شده است.', getMainMenu());
+        }
+
+        // Deduct Coins
+        user.credits -= 50;
+        user.regStep = 'completed';
+        await user.save();
+
+        // Send to Target
+        try {
+            const senderName = user.displayName || "ناشناس";
+            await ctx.telegram.sendMessage(targetId, `${TEXTS.dm_received} <b>${senderName}</b>\n\n💌 متن پیام:\n<i>${text}</i>`, { parse_mode: 'HTML' });
+            
+            // Give the receiver a button to view the sender's profile
+            await ctx.telegram.sendMessage(targetId, "👇 برای مشاهده پروفایل فرستنده یا پاسخ دادن کلیک کنید:", {
+                reply_markup: {
+                    inline_keyboard: [[{ text: '👤 مشاهده پروفایل', callback_data: `view_profile_${ctx.from.id}` }]]
+                }
+            });
+
+            await ctx.reply(TEXTS.dm_success, getMainMenu());
+        } catch (e) {
+            // Refund if message failed (user blocked bot)
+            user.credits += 50;
+            await user.save();
+            await ctx.reply('❌ ارسال پیام ناموفق بود. احتمالا کاربر ربات را مسدود کرده است. (سکه عودت داده شد)', getMainMenu());
+        }
+        return;
+    }
 
     // 1. CHAT MODE
     if (user.status === 'chatting' && user.partnerId) {
@@ -1270,11 +1318,12 @@ async function showProfile(ctx, targetUser, isSelf) {
         ]
     ];
 
-    // Only show "Send Gift" if looking at SOMEONE ELSE
     if (!isSelf) {
         inlineRows.push([
-            // CHANGED: Fixed text, removed English words
-            { text: '🎁 اهدای هدیه', callback_data: `pre_gift_${targetUser.telegramId}` } 
+            { text: '📩 پیام مستقیم (۵۰ سکه)', callback_data: `dm_prep_${targetUser.telegramId}` }
+        ]);
+        inlineRows.push([
+            { text: '🎁 اهدای هدیه', callback_data: `pre_gift_${targetUser.telegramId}` }
         ]);
     }
 
@@ -1400,8 +1449,26 @@ bot.action('start_adv_search', async (ctx) => {
     // Call the main search function
     return startSearch(ctx, 'advanced');
 });
-// --- VOTE ACTION (Updates Buttons Dynamically) ---
-// --- VOTE ACTION (Updated for "Who Liked Me") ---
+
+// Triggered when user clicks "Message Directly"
+bot.action(/^dm_prep_(\d+)$/, async (ctx) => {
+    const targetId = ctx.match[1];
+    const user = ctx.user;
+
+    if (user.credits < 50) {
+        return ctx.answerCbQuery('⚠️ موجودی کافی نیست! (۵۰ سکه لازم است)', { show_alert: true });
+    }
+
+    user.regStep = `dm_sending_${targetId}`;
+    await user.save();
+
+    await ctx.reply(TEXTS.dm_intro, { 
+        parse_mode: 'HTML', 
+        reply_markup: Markup.keyboard([['🔙 انصراف']]).resize() 
+    });
+    await ctx.answerCbQuery();
+});
+
 // --- VOTE ACTION (Fixed: Anti-Spam & Persist Gift Button) ---
 bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
     const type = ctx.match[1];
