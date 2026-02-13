@@ -174,7 +174,8 @@ const userSchema = new mongoose.Schema({
     stats: { 
         likes: { type: Number, default: 0 }, 
         dislikes: { type: Number, default: 0 },
-        likedBy: { type: [Number], default: [] } // Stores IDs of people who liked
+        likedBy: { type: [Number], default: [] },     // Stores IDs of Likers
+        dislikedBy: { type: [Number], default: [] }   // Stores IDs of Dislikers (New)
     },
     // --- NEW: GIFTS SYSTEM ---
     gifts: {
@@ -1381,42 +1382,60 @@ bot.action('start_adv_search', async (ctx) => {
 });
 // --- VOTE ACTION (Updates Buttons Dynamically) ---
 // --- VOTE ACTION (Updated for "Who Liked Me") ---
+// --- VOTE ACTION (Fixed: Anti-Spam & Persist Gift Button) ---
 bot.action(/^(like|dislike)_(\d+)$/, async (ctx) => {
     const type = ctx.match[1];
     const targetId = parseInt(ctx.match[2]);
     const voterId = ctx.from.id;
 
-    // Prevent self-voting
+    // 1. Prevent Self-Voting
     if (targetId === voterId) return ctx.answerCbQuery(TEXTS.self_vote);
     
+    // 2. Fetch Target
     const target = await User.findOne({ telegramId: targetId });
     if (!target) return ctx.answerCbQuery('کاربر یافت نشد');
 
-    // Update Stats
+    // 3. CHECK DUPLICATE VOTES (Anti-Spam Logic)
+    // Check if voterId is already in likedBy OR dislikedBy lists
+    const hasLiked = target.stats.likedBy.includes(voterId);
+    const hasDisliked = target.stats.dislikedBy && target.stats.dislikedBy.includes(voterId);
+
+    if (hasLiked || hasDisliked) {
+        return ctx.answerCbQuery('⚠️ شما قبلاً به این کاربر رای داده‌اید!', { show_alert: true });
+    }
+
+    // 4. Apply Vote
     if (type === 'like') {
         target.stats.likes++;
-        
-        // Add voter to list if not already there
-        if (!target.stats.likedBy.includes(voterId)) {
-            target.stats.likedBy.push(voterId);
-        }
+        target.stats.likedBy.push(voterId);
     } else {
         target.stats.dislikes++;
+        // Ensure array exists (for old users)
+        if (!target.stats.dislikedBy) target.stats.dislikedBy = [];
+        target.stats.dislikedBy.push(voterId);
     }
     
     await target.save();
 
-    // Update the Buttons
-    try {
-        await ctx.editMessageReplyMarkup({
-            inline_keyboard: [[
-                { text: `👍 ${target.stats.likes}`, callback_data: `like_${targetId}` },
-                { text: `👎 ${target.stats.dislikes}`, callback_data: `dislike_${targetId}` }
-            ]]
-        });
-    } catch (e) {}
+    // 5. Rebuild Keyboard (CRITICAL: Add Gift Button Back)
+    // We know viewer != target (checked at step 1), so we ALWAYS add the gift button.
+    const newKeyboard = [
+        [
+            { text: `👍 ${target.stats.likes}`, callback_data: `like_${targetId}` },
+            { text: `👎 ${target.stats.dislikes}`, callback_data: `dislike_${targetId}` }
+        ],
+        [
+            { text: '🎁 اهدای هدیه', callback_data: `pre_gift_${targetId}` }
+        ]
+    ];
 
-    ctx.answerCbQuery('نظر شما ثبت شد');
+    try {
+        await ctx.editMessageReplyMarkup({ inline_keyboard: newKeyboard });
+    } catch (e) {
+        // Ignore "message not modified" errors
+    }
+
+    ctx.answerCbQuery('✅ نظر شما ثبت شد');
 });
 async function startSearch(ctx, type) {
     const userId = ctx.from.id;
