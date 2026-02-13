@@ -207,8 +207,9 @@ const chunk = (arr, size) => Array.from({ length: Math.ceil(arr.length / size) }
 
 const getMainMenu = () => Markup.keyboard([
     [TEXTS.btn_connect], 
+    ['📩 ارسال پیام مستقیم'], // <--- NEW BUTTON
     [TEXTS.btn_profile, TEXTS.btn_edit],
-    [TEXTS.btn_shop, TEXTS.btn_settings] // Changed to btn_shop
+    [TEXTS.btn_shop, TEXTS.btn_settings] 
 ]).resize();
 
 const getSettingsMenu = () => Markup.keyboard([
@@ -587,7 +588,8 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
     const user = ctx.user;
     const text = ctx.message.text || "";
 
-    // --- DIRECT MESSAGE SENDING LOGIC ---
+    // --- 1. DIRECT MESSAGE: SENDING THE TEXT ---
+    // This runs when the user has already selected a target and is typing the message
     if (user.regStep && user.regStep.startsWith('dm_sending_')) {
         if (text === '🔙 انصراف') {
             user.regStep = 'completed';
@@ -595,9 +597,9 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
             return ctx.reply('❌ ارسال پیام لغو شد.', getMainMenu());
         }
 
-        const targetId = user.regStep.split('_')[2];
+        const targetId = parseInt(user.regStep.split('_')[2]);
 
-        // Final check for coins
+        // Final Coin Check
         if (user.credits < 50) {
             user.regStep = 'completed';
             await user.save();
@@ -612,26 +614,70 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
         // Send to Target
         try {
             const senderName = user.displayName || "ناشناس";
-            await ctx.telegram.sendMessage(targetId, `${TEXTS.dm_received} <b>${senderName}</b>\n\n💌 متن پیام:\n<i>${text}</i>`, { parse_mode: 'HTML' });
             
-            // Give the receiver a button to view the sender's profile
-            await ctx.telegram.sendMessage(targetId, "👇 برای مشاهده پروفایل فرستنده یا پاسخ دادن کلیک کنید:", {
+            // Notify Receiver
+            await ctx.telegram.sendMessage(targetId, 
+                `📩 <b>یک پیام مستقیم دریافت کردید!</b>\n\n` +
+                `👤 از طرف: <b>${senderName}</b>\n` +
+                `🆔 آیدی فرستنده: <code>${ctx.from.id}</code>\n` +
+                `➖➖➖➖➖➖➖➖\n` +
+                `${text}`, // Sends the actual text
+                { parse_mode: 'HTML' }
+            );
+            
+            // Give Receiver Option to Reply/View Profile
+            await ctx.telegram.sendMessage(targetId, "👇 عملیات:", {
                 reply_markup: {
-                    inline_keyboard: [[{ text: '👤 مشاهده پروفایل', callback_data: `view_profile_${ctx.from.id}` }]]
+                    inline_keyboard: [[{ text: '👤 مشاهده پروفایل فرستنده', callback_data: `view_profile_${ctx.from.id}` }]]
                 }
             });
 
-            await ctx.reply(TEXTS.dm_success, getMainMenu());
+            await ctx.reply(`✅ پیام ارسال شد!\n💰 ۵۰ سکه کسر گردید.`, getMainMenu());
+
         } catch (e) {
-            // Refund if message failed (user blocked bot)
+            // Refund if failed (User blocked bot)
             user.credits += 50;
             await user.save();
-            await ctx.reply('❌ ارسال پیام ناموفق بود. احتمالا کاربر ربات را مسدود کرده است. (سکه عودت داده شد)', getMainMenu());
+            await ctx.reply('❌ ارسال پیام ناموفق بود. کاربر ربات را بلاک کرده است. (سکه برگشت داده شد)', getMainMenu());
         }
-        return;
+        return; // Stop here, don't process other logic
     }
 
-    // 1. CHAT MODE
+    // --- 2. DIRECT MESSAGE: MAIN MENU BUTTON CLICK ---
+    if (text === '📩 ارسال پیام مستقیم') {
+        user.regStep = 'awaiting_dm_id';
+        await user.save();
+        return ctx.reply('🆔 لطفا **آیدی عددی** کاربری که میخواهید به او پیام دهید را وارد کنید:', 
+            { parse_mode: 'Markdown', ...Markup.keyboard([['🔙 برگشت']]).resize() }
+        );
+    }
+
+    // --- 3. DIRECT MESSAGE: HANDLING ID INPUT ---
+    if (user.regStep === 'awaiting_dm_id') {
+        if (text === '🔙 برگشت') {
+            user.regStep = 'completed';
+            await user.save();
+            return ctx.reply(TEXTS.main_menu_title, getMainMenu());
+        }
+
+        const targetId = parseInt(text);
+        if (isNaN(targetId)) return ctx.reply('❌ آیدی باید یک عدد باشد.');
+
+        if (targetId === user.telegramId) return ctx.reply('😳 به خودتان که نمیشود پیام داد!');
+
+        const targetUser = await User.findOne({ telegramId: targetId });
+        if (!targetUser) return ctx.reply('❌ کاربری با این آیدی یافت نشد.');
+
+        // Show the profile so they can confirm it's the right person
+        // We reset the step to 'completed' so they are back in the main menu flow
+        user.regStep = 'completed';
+        await user.save();
+        
+        await ctx.reply('👇 پروفایل کاربر یافت شد. اگر این همان شخصی است که میخواهید، دکمه "پیام مستقیم" را بزنید:', getMainMenu());
+        return showProfile(ctx, targetUser, false);
+    }
+
+    // 1. CHAT MODE (Existing Logic)
     if (user.status === 'chatting' && user.partnerId) {
 
         // If it is NOT text and NOT a photo, send a warning and stop.
@@ -1311,6 +1357,7 @@ async function showProfile(ctx, targetUser, isSelf) {
                     `🆔 <b>آیدی عددی:</b> <code>${targetUser.telegramId}</code>`;
 
     // --- 5. BUILD BUTTONS ---
+    // --- 5. BUILD BUTTONS ---
     let inlineRows = [
         [
             { text: `👍 ${targetUser.stats.likes}`, callback_data: `like_${targetUser.telegramId}` },
@@ -1319,9 +1366,16 @@ async function showProfile(ctx, targetUser, isSelf) {
     ];
 
     if (!isSelf) {
-        inlineRows.push([
-            { text: '📩 پیام مستقیم (۵۰ سکه)', callback_data: `dm_prep_${targetUser.telegramId}` }
-        ]);
+        // CHECK: Are we currently connected to this specific user?
+        const isChattingWithTarget = (ctx.user.status === 'chatting' && ctx.user.partnerId === targetUser.telegramId);
+
+        // Only show DM button if NOT chatting with them
+        if (!isChattingWithTarget) {
+            inlineRows.push([
+                { text: '📩 پیام مستقیم (۵۰ سکه)', callback_data: `dm_prep_${targetUser.telegramId}` }
+            ]);
+        }
+
         inlineRows.push([
             { text: '🎁 اهدای هدیه', callback_data: `pre_gift_${targetUser.telegramId}` }
         ]);
@@ -1459,13 +1513,19 @@ bot.action(/^dm_prep_(\d+)$/, async (ctx) => {
         return ctx.answerCbQuery('⚠️ موجودی کافی نیست! (۵۰ سکه لازم است)', { show_alert: true });
     }
 
+    // Set state to capture the next text message
     user.regStep = `dm_sending_${targetId}`;
     await user.save();
 
-    await ctx.reply(TEXTS.dm_intro, { 
-        parse_mode: 'HTML', 
-        reply_markup: Markup.keyboard([['🔙 انصراف']]).resize() 
-    });
+    await ctx.reply(
+        '📝 <b>متن پیام خود را بنویسید:</b>\n' +
+        '⚠️ هزینه ارسال: ۵۰ سکه\n' +
+        '❌ در صورت بلاک بودن کاربر، سکه برگشت داده میشود.', 
+        { 
+            parse_mode: 'HTML', 
+            reply_markup: Markup.keyboard([['🔙 انصراف']]).resize() 
+        }
+    );
     await ctx.answerCbQuery();
 });
 
