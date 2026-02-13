@@ -312,6 +312,57 @@ bot.use(async (ctx, next) => {
 
 // --- ADMIN COMMANDS ---
 // --- ADMIN COMMANDS ---
+// --- ADD THESE NEW ADMIN COMMANDS ---
+
+bot.command('addchannel', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const channel = ctx.message.text.split(' ')[1];
+    
+    if (!channel) return ctx.reply('❌ لطفا آیدی کانال را وارد کنید.\nمثال: /addchannel @MyChannel');
+
+    try {
+        // Verify bot is admin there first
+        const chatMember = await ctx.telegram.getChatMember(channel, ctx.botInfo.id);
+        if (chatMember.status !== 'administrator') {
+            return ctx.reply('⚠️ ربات در کانال مورد نظر **ادمین** نیست!\nابتدا ربات را ادمین کنید.');
+        }
+
+        const config = await Config.findOne({ id: 'global' });
+        if (!config.requiredChannels.includes(channel)) {
+            config.requiredChannels.push(channel);
+            await config.save();
+            ctx.reply(`✅ کانال ${channel} به لیست قفل اضافه شد.`);
+        } else {
+            ctx.reply('⚠️ این کانال قبلاً اضافه شده است.');
+        }
+    } catch (e) {
+        ctx.reply('❌ خطا: ربات نمیتواند کانال را پیدا کند (یا ادمین نیست).');
+    }
+});
+
+bot.command('delchannel', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const channel = ctx.message.text.split(' ')[1];
+    if (!channel) return ctx.reply('❌ آیدی کانال را وارد کنید.');
+
+    const config = await Config.findOne({ id: 'global' });
+    const newList = config.requiredChannels.filter(c => c !== channel);
+    
+    if (newList.length === config.requiredChannels.length) {
+        return ctx.reply('⚠️ این کانال در لیست نبود.');
+    }
+
+    config.requiredChannels = newList;
+    await config.save();
+    ctx.reply(`🗑 کانال ${channel} از لیست حذف شد.`);
+});
+
+bot.command('channels', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const config = await Config.findOne({ id: 'global' });
+    if (config.requiredChannels.length === 0) return ctx.reply('📭 لیست کانال‌ها خالی است.');
+    ctx.reply(`📢 کانال‌های قفل شده:\n\n${config.requiredChannels.join('\n')}`);
+});
 
 // Usage: /ban 12345 Reason
 bot.command('ban', async (ctx) => {
@@ -807,10 +858,15 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
 
     // 3. MENUS
     if (text === TEXTS.btn_connect) {
+        // 1. Check Channel Membership First
+        const isJoined = await checkMembership(ctx);
+        if (!isJoined) return; // Stop if not joined (the helper function sends the message)
+
+        // 2. If joined, show the menu
         return ctx.reply(TEXTS.search_menu_title, Markup.keyboard([
-            ['🎲 جستجو شانسی'], // Removed "(رایگان)"
-            ['👦 جستجو پسر', '👩 جستجو دختر'], // Removed "(۲ سکه)"
-            ['🔍 جستجو پیشرفته'], // Removed "(۱۰ سکه)"
+            ['🎲 جستجو شانسی'], 
+            ['👦 جستجو پسر', '👩 جستجو دختر'], 
+            ['🔍 جستجو پیشرفته'], 
             [TEXTS.btn_back]
         ]).resize());
     }
@@ -1165,6 +1221,30 @@ bot.action('cancel_gift', async (ctx) => {
     await ctx.deleteMessage();
 });
 
+// --- CHECK SUBSCRIPTION BUTTON ---
+bot.action('check_subscription', async (ctx) => {
+    // Re-run the check logic
+    const config = await Config.findOne({ id: 'global' });
+    let allJoined = true;
+
+    for (const channel of config.requiredChannels) {
+        try {
+            const res = await ctx.telegram.getChatMember(channel, ctx.from.id);
+            if (['left', 'kicked'].includes(res.status)) {
+                allJoined = false;
+                break;
+            }
+        } catch (e) { }
+    }
+
+    if (allJoined) {
+        await ctx.deleteMessage(); // Remove the "Join" message
+        await ctx.reply('✅ ممنون از حمایت شما! حالا میتوانید وصل شوید.', getMainMenu());
+    } else {
+        await ctx.answerCbQuery('❌ شما هنوز در تمام کانال‌ها عضو نشده‌اید!', { show_alert: true });
+    }
+});
+
 // --- REPORT ACTION HANDLER ---
 bot.action(/^rep_(.*)_(.*)$/, async (ctx) => {
     try {
@@ -1202,6 +1282,47 @@ bot.action(/^rep_(.*)_(.*)$/, async (ctx) => {
         }
     } catch (e) { console.error('Report Error:', e); }
 });
+
+// --- HELPER: CHECK MEMBERSHIP ---
+async function checkMembership(ctx) {
+    const config = await Config.findOne({ id: 'global' });
+    if (!config || config.requiredChannels.length === 0) return true; // No channels to check
+
+    const notJoined = [];
+    
+    for (const channel of config.requiredChannels) {
+        try {
+            const res = await ctx.telegram.getChatMember(channel, ctx.from.id);
+            // If user is left, kicked, or restricted(without permission), they need to join
+            if (['left', 'kicked'].includes(res.status)) {
+                notJoined.push(channel);
+            }
+        } catch (e) {
+            // If bot fails to check (not admin), we usually ignore or assume joined to prevent blocking users
+            console.error(`Failed to check ${channel}:`, e.message);
+        }
+    }
+
+    if (notJoined.length === 0) return true; // Joined all
+
+    // --- BUILD PROFESSIONAL UI ---
+    const buttons = [];
+    notJoined.forEach((ch, index) => {
+        // We can try to get invite link or just use username
+        // Cleaning username to remove '@' for url if needed, but telegram.me works with @
+        const cleanName = ch.replace('@', '');
+        buttons.push([Markup.button.url(`📢 عضویت در کانال ${index + 1}`, `https://t.me/${cleanName}`)]);
+    });
+
+    buttons.push([Markup.button.callback('✅ عضو شدم / ادامه', 'check_subscription')]);
+
+    const joinMsg = `🔒 <b>عضویت اجباری</b>\n\n` +
+                    `دوست عزیز برای استفاده از ربات و حمایت از ما، لطفا در کانال‌های زیر عضو شوید و سپس دکمه <b>"عضو شدم"</b> را بزنید.\n\n` +
+                    `<i>(استفاده از ربات کاملا رایگان است، عضویت شما تنها حمایت از ماست ❤️)</i>`;
+
+    await ctx.reply(joinMsg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } });
+    return false;
+}
 
 // --- REGISTRATION STEP HANDLER ---
 async function stepHandler(ctx) {
