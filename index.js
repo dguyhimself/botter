@@ -1192,6 +1192,7 @@ async function stepHandler(ctx) {
         await cleanPrev(ctx); 
         await ctx.reply('🎉 پروفایل تکمیل شد!', getMainMenu());
     }
+}
 
 async function showProfile(ctx, targetUser, isSelf) {
     if (!targetUser) return ctx.reply('❌ کاربر یافت نشد.');
