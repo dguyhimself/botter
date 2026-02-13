@@ -454,17 +454,25 @@ bot.start(async (ctx) => {
     // 1. Check if user exists
     let user = await User.findOne({ telegramId: ctx.from.id });
     
-    // --- FIX: RESET STATUS ON START ---
-    if (user && user.status === 'searching') {
-        user.status = 'idle';
-        user.searchGender = null;
-        await user.save();
-        await ctx.reply(TEXTS.search_stopped); // Optional: Tell them search stopped
+    if (user) {
+        // --- FIX: DISCONNECT IF CHATTING ---
+        if (user.status === 'chatting' && user.partnerId) {
+            await endChat(ctx.from.id, user.partnerId, ctx);
+            // Re-fetch user to ensure we have the updated 'idle' status in memory
+            user = await User.findOne({ telegramId: ctx.from.id });
+        } 
+        // --- FIX: RESET STATUS IF SEARCHING ---
+        else if (user.status === 'searching') {
+            user.status = 'idle';
+            user.searchGender = null;
+            await user.save();
+            await ctx.reply(TEXTS.search_stopped);
+        }
     }
     
     // 2. If NEW USER, handle Referral
     if (!user) {
-        const referrerId = parseInt(ctx.startPayload); // Gets the ID from t.me/bot?start=12345
+        const referrerId = parseInt(ctx.startPayload); 
         
         user = new User({ 
             telegramId: ctx.from.id, 
@@ -473,13 +481,11 @@ bot.start(async (ctx) => {
         });
         await user.save();
 
-        // Award the Referrer (if valid)
         if (referrerId && referrerId !== ctx.from.id) {
             const referrer = await User.findOne({ telegramId: referrerId });
             if (referrer) {
-                referrer.credits += 5; // +5 Credits Reward
+                referrer.credits += 5; 
                 await referrer.save();
-                // Notify Referrer
                 try {
                     await ctx.telegram.sendMessage(referrerId, `${TEXTS.referral_reward}\n💰 موجودی جدید: ${referrer.credits}`);
                 } catch (e) {}
@@ -493,10 +499,9 @@ bot.start(async (ctx) => {
     }
 
     // Start Registration
-    ctx.user = user; // Ensure ctx.user is set
+    ctx.user = user; 
     ctx.user.regStep = 'intro'; await ctx.user.save();
     
-    // We add { parse_mode: 'HTML' } so the bold text works
     const m = await ctx.reply(TEXTS.intro, { parse_mode: 'HTML' });
     
     setTimeout(async () => {
@@ -506,6 +511,7 @@ bot.start(async (ctx) => {
         ctx.user.lastMsgId = m2.message_id; await ctx.user.save();
     }, 3000);
 });
+
 // --- WHO LIKED ME (PREMIUM FEATURE) ---
 bot.hears('❤️ چه کسانی مرا لایک کردند؟', async (ctx) => {
     const user = ctx.user;
