@@ -1079,40 +1079,55 @@ async function showProfile(ctx, targetUser, isSelf) {
     if (!targetUser) return ctx.reply('❌ کاربر یافت نشد.');
     
     const p = targetUser.profile;
+    
+    // Sanitize name to prevent HTML injection
     const safeName = (targetUser.displayName || 'نامشخص')
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
 
-    // --- BADGE LOGIC ---
+    // --- 1. DETERMINE BADGE (VIP / VVIP) ---
     let userBadge = '👤 کاربر عادی';
-    if (targetUser.credits >= 300) userBadge = '💎 <b>VVIP (Diamond)</b>'; 
-    else if (targetUser.credits >= 100) userBadge = '🌟 <b>VIP (Gold)</b>';
+    
+    // Top Tier (300+ coins)
+    if (targetUser.credits >= 300) {
+        userBadge = '💎 <b>VVIP (Diamond)</b>'; 
+    } 
+    // Middle Tier (100+ coins)
+    else if (targetUser.credits >= 100) {
+        userBadge = '🌟 <b>VIP (Gold)</b>';
+    }
 
-    // --- GIFTS DISPLAY LOGIC ---
-    // Only show the gift row if they actually have gifts
+    // --- 2. GIFTS DISPLAY (THE STATUS PART) ---
     let giftsDisplay = '';
     const g = targetUser.gifts || {};
+    
+    // Check if they have ANY gifts
     const hasGifts = (g.rose > 0 || g.diamond > 0 || g.trophy > 0);
 
     if (hasGifts) {
-        giftsDisplay += `🎁 <b>کلکسیون افتخارات:</b>\n`;
+        // CHANGED: From "کلکسیون افتخارات" to "ویترین هدایا" (Gift Showcase)
+        giftsDisplay += `💎 <b>ویترین هدایا:</b>\n`; 
+        
         if (g.trophy > 0) giftsDisplay += `🏆 <b>${g.trophy}</b> جام طلایی\n`;
         if (g.diamond > 0) giftsDisplay += `💎 <b>${g.diamond}</b> الماس\n`;
         if (g.rose > 0)    giftsDisplay += `🌹 <b>${g.rose}</b> گل رز\n`;
+        
         giftsDisplay += `➖➖➖➖➖➖➖➖➖➖\n`;
     }
 
-    // --- BALANCE PRIVACY ---
+    // --- 3. HANDLE PRIVACY (Only show exact coins to SELF) ---
     let balanceInfo = '';
     if (isSelf) {
         balanceInfo = `💰 <b>موجودی:</b> ${targetUser.credits} سکه\n`;
     }
 
-    // --- CAPTION BUILD ---
+    // --- 4. BUILD CAPTION ---
     const caption = `🎫 <b>پروفایل کاربری</b>\n\n` +
                     `🔰 <b>وضعیت:</b> ${userBadge}\n` + 
                     balanceInfo + 
                     `➖➖➖➖➖➖➖➖➖➖\n` +
-                    giftsDisplay + // <--- Added Here
+                    giftsDisplay + // <--- Gifts appear here
                     `👤 <b>نام:</b> ${safeName}\n` +
                     `🎂 <b>سن:</b> ${p.age || 'تعیین نشده'}\n` +
                     `🚻 <b>جنسیت:</b> ${p.gender || 'تعیین نشده'}\n` +
@@ -1122,7 +1137,7 @@ async function showProfile(ctx, targetUser, isSelf) {
                     `➖➖➖➖➖➖➖➖➖➖\n` +
                     `🆔 <b>آیدی عددی:</b> <code>${targetUser.telegramId}</code>`;
 
-    // Define Buttons
+    // --- 5. BUILD BUTTONS ---
     let inlineRows = [
         [
             { text: `👍 ${targetUser.stats.likes}`, callback_data: `like_${targetUser.telegramId}` },
@@ -1130,29 +1145,44 @@ async function showProfile(ctx, targetUser, isSelf) {
         ]
     ];
 
-    // Only add Gift button if looking at someone else
+    // Only show "Send Gift" if looking at SOMEONE ELSE
     if (!isSelf) {
         inlineRows.push([
-            { text: '🎁 اهدای هدیه (Rose/Gem/Trophy)', callback_data: `pre_gift_${targetUser.telegramId}` }
+            // CHANGED: Fixed text, removed English words
+            { text: '🎁 اهدای هدیه', callback_data: `pre_gift_${targetUser.telegramId}` } 
         ]);
     }
 
     const buttons = { inline_keyboard: inlineRows };
 
+    // Send
     try {
         if (p.photoId) {
-            await ctx.replyWithPhoto(p.photoId, { caption: caption, parse_mode: 'HTML', reply_markup: buttons });
+            await ctx.replyWithPhoto(p.photoId, { 
+                caption: caption, 
+                parse_mode: 'HTML', 
+                reply_markup: buttons 
+            });
         } else {
-            await ctx.reply(caption, { parse_mode: 'HTML', reply_markup: buttons });
+            await ctx.reply(caption, { 
+                parse_mode: 'HTML', 
+                reply_markup: buttons 
+            });
         }
     } catch (e) {
+        console.error('Error sending profile:', e);
         ctx.reply('⚠️ خطا در نمایش پروفایل.');
     }
-    
+
+    // Notify if viewed by someone else
     if (!isSelf) {
-        try { await ctx.telegram.sendMessage(targetUser.telegramId, TEXTS.profile_viewed); } catch (e) {}
+        try { 
+            await ctx.telegram.sendMessage(targetUser.telegramId, TEXTS.profile_viewed); 
+        } catch (e) {}
     }
 }
+
+
 async function showAdvancedMenu(ctx) {
     const f = ctx.user.searchFilters;
     
