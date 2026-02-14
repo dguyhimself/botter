@@ -183,6 +183,7 @@ const userSchema = new mongoose.Schema({
         purpose: { type: String, default: 'all' }
     },
     searchGender: { type: String, default: 'all' }, // <--- ADD THIS LINE HERE
+    searchPriority: { type: Number, default: 0 },
     credits: { type: Number, default: 0 },
     invitedBy: { type: Number },
     stats: { 
@@ -1778,10 +1779,18 @@ async function startSearch(ctx, type) {
     const user = await User.findOne({ telegramId: userId });
     const userProfile = user.profile || {};
 
-    // --- 2. DETERMINE COST ---
+    // --- 2. DETERMINE COST & PRIORITY ---
     let cost = 0;
-    if (type === 'boy' || type === 'girl') cost = 2;
-    if (type === 'advanced') cost = 10;
+    let priority = 0; // Default (Random)
+
+    if (type === 'boy' || type === 'girl') {
+        cost = 2;
+        priority = 1; // Medium Priority
+    }
+    if (type === 'advanced') {
+        cost = 10;
+        priority = 2; // High Priority
+    }
 
     // --- 3. CHECK BALANCE ---
     if (user.credits < cost) {
@@ -1819,7 +1828,7 @@ async function startSearch(ctx, type) {
     // --- 6. LOGIC SPLIT ---
 
     if (type === 'advanced') {
-        // === I AM THE FILTERER ===
+        // === I AM THE FILTERER (High Priority) ===
         // I want to find someone, and I am picky.
         
         finalFilter = { ...baseFilter };
@@ -1884,11 +1893,13 @@ async function startSearch(ctx, type) {
         };
     }
 
-    // --- 7. EXECUTE SEARCH ---
+    // --- 7. EXECUTE SEARCH (WITH PRIORITY SORT) ---
+    // ✨ FIX IS HERE: We Sort by searchPriority (Highest First)
+    // If priorities are equal, we sort by who was updated last (waiting longest ideally, or standard Mongo order)
     const partner = await User.findOneAndUpdate(
         finalFilter, 
         { status: 'chatting', partnerId: userId }, 
-        { new: true }
+        { sort: { searchPriority: -1 }, new: true } // <--- 🔥 SORT ADDED HERE
     );
 
     // --- 8. DEDUCT CREDITS ---
@@ -1904,7 +1915,8 @@ async function startSearch(ctx, type) {
         await User.updateOne({ telegramId: userId }, {
             status: 'chatting',
             partnerId: partner.telegramId,
-            searchGender: 'all' // Reset
+            searchGender: 'all', // Reset
+            searchPriority: 0    // Reset
         });
         
         ctx.user.status = 'chatting';
@@ -1932,7 +1944,8 @@ async function startSearch(ctx, type) {
 
         await User.updateOne({ telegramId: userId }, {
             status: 'searching',
-            searchGender: newSearchGender
+            searchGender: newSearchGender,
+            searchPriority: priority // <--- 🔥 SAVE PRIORITY HERE
         });
 
         // Update context
