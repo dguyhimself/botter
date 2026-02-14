@@ -26,8 +26,7 @@ const TEXTS = {
            `💎 <b>سطح کاربری:</b> ارتقا به VIP و الماس برای تمایز.\n` +
            `🎯 <b>جستجوی هوشمند:</b> پیدا کردن هم‌صحبت بر اساس ولایت و جنسیت.\n\n` +
            `👇 <b>برای شروع، پروفایل خود را تکمیل کنید:</b>`,
-// Replace the old main_menu_title line with this:
-    main_menu_title: '🏠 **منوی اصلی**\n\n👇 **چه کاری می‌خواهید انجام دهید؟**\nلطفا یکی از گزینه‌های زیر را انتخاب کنید:',
+    main_menu_title: '🏠 منوی اصلی:',
     search_menu_title: '🧐 نوع جستجو را انتخاب کنید:',
     
     btn_connect: '🎲 وصل شدن به ناشناس',
@@ -589,16 +588,8 @@ bot.start(async (ctx) => {
     }
 
     // 3. Normal Start Flow
-// 3. Normal Start Flow (Updated for Professional Look)
     if (user.regStep === 'completed') {
-        const name = user.displayName || 'دوست عزیز';
-        return ctx.reply(
-            `👋 <b>سلام ${name} جان!</b>\n\n` +
-            `🏠 <b>به منوی اصلی خوش آمدید.</b>\n` +
-            `چطور می‌توانم امروز به شما کمک کنم؟ 🤔\n\n` +
-            `👇 <b>لطفا یک گزینه را انتخاب کنید:</b>`,
-            { parse_mode: 'HTML', ...getMainMenu() }
-        );
+        return ctx.reply(TEXTS.main_menu_title, getMainMenu());
     }
 
     // Start Registration
@@ -935,15 +926,7 @@ bot.on(['text', 'photo', 'sticker', 'animation', 'video', 'voice'], async (ctx) 
     
     if (text === TEXTS.btn_edit) return ctx.reply('بخش مورد نظر را انتخاب کنید:', getEditMenu());
     
-    if (text === TEXTS.btn_back || text === '🔙 برگشت به منوی اصلی') {
-        const name = user.displayName || 'دوست عزیز';
-        return ctx.reply(
-            `👋 <b>${name}، به خانه بازگشتید!</b>\n\n` +
-            `🏠 <b>منوی اصلی:</b>\n` +
-            `چه کاری انجام دهیم؟ 👇`,
-            { parse_mode: 'HTML', ...getMainMenu() }
-        );
-    } return ctx.reply(TEXTS.main_menu_title, getMainMenu());
+    if (text === TEXTS.btn_back || text === '🔙 برگشت به منوی اصلی') return ctx.reply(TEXTS.main_menu_title, getMainMenu());
 
     // --- NEW SETTINGS LOGIC ---
     if (text === TEXTS.btn_settings) {
