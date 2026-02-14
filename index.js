@@ -1486,7 +1486,9 @@ if (user.regStep === 'photo') {
 async function showProfile(ctx, targetUser, isSelf) {
     if (!targetUser) return ctx.reply('❌ کاربر یافت نشد.');
     
-    const p = targetUser.profile;
+    // Safety check: ensure profile and stats exist
+    const p = targetUser.profile || {};
+    const stats = targetUser.stats || { likes: 0, dislikes: 0, likedBy: [], dislikedBy: [] };
     
     // Sanitize name to prevent HTML injection
     const safeName = (targetUser.displayName || 'نامشخص')
@@ -1497,34 +1499,26 @@ async function showProfile(ctx, targetUser, isSelf) {
     // --- 1. DETERMINE BADGE (VIP / VVIP) ---
     let userBadge = '👤 کاربر عادی';
     
-    // Top Tier (300+ coins)
     if (targetUser.credits >= 300) {
         userBadge = '💎 <b>VVIP (Diamond)</b>'; 
-    } 
-    // Middle Tier (120+ coins)
-    else if (targetUser.credits >= 120) {
+    } else if (targetUser.credits >= 120) {
         userBadge = '🌟 <b>VIP (Gold)</b>';
     }
 
     // --- 2. GIFTS DISPLAY ---
     let giftsDisplay = '';
     const g = targetUser.gifts || {};
-    
-    // Check if they have ANY gifts
     const hasGifts = (g.rose > 0 || g.diamond > 0 || g.crown > 0);
 
     if (hasGifts) {
         giftsDisplay += `💎 <b>ویترین هدایا:</b>\n`; 
-        
-        // Order: Diamond (Top) -> Crown -> Rose
         if (g.diamond > 0) giftsDisplay += `💎 <b>${g.diamond}</b> الماس\n`;
         if (g.crown > 0)   giftsDisplay += `👑 <b>${g.crown}</b> تاج\n`;
         if (g.rose > 0)    giftsDisplay += `🌹 <b>${g.rose}</b> گل رز\n`;
-        
         giftsDisplay += `➖➖➖➖➖➖➖➖➖➖\n`;
     }
 
-    // --- 3. HANDLE PRIVACY (Only show exact coins to SELF) ---
+    // --- 3. HANDLE PRIVACY ---
     let balanceInfo = '';
     if (isSelf) {
         balanceInfo = `💰 <b>موجودی:</b> ${targetUser.credits} سکه\n`;
@@ -1548,16 +1542,15 @@ async function showProfile(ctx, targetUser, isSelf) {
     // --- 5. BUILD BUTTONS ---
     let inlineRows = [
         [
-            { text: `👍 ${targetUser.stats.likes}`, callback_data: `like_${targetUser.telegramId}` },
-            { text: `👎 ${targetUser.stats.dislikes}`, callback_data: `dislike_${targetUser.telegramId}` }
+            { text: `👍 ${stats.likes}`, callback_data: `like_${targetUser.telegramId}` },
+            { text: `👎 ${stats.dislikes}`, callback_data: `dislike_${targetUser.telegramId}` }
         ]
     ];
 
     if (!isSelf) {
-        // CHECK: Are we currently connected to this specific user?
-        const isChattingWithTarget = (ctx.user.status === 'chatting' && ctx.user.partnerId === targetUser.telegramId);
+        const myUser = ctx.user || {}; // Ensure we have the user
+        const isChattingWithTarget = (myUser.status === 'chatting' && myUser.partnerId === targetUser.telegramId);
 
-        // Only show DM button if NOT chatting with them
         if (!isChattingWithTarget) {
             inlineRows.push([
                 { text: '📩 پیام مستقیم (۵۰ سکه)', callback_data: `dm_prep_${targetUser.telegramId}` }
@@ -1565,22 +1558,37 @@ async function showProfile(ctx, targetUser, isSelf) {
         }
 
         inlineRows.push([
-            // Gift Button
             { text: '🎁 اهدای هدیه', callback_data: `pre_gift_${targetUser.telegramId}` } 
         ]);
     }
 
     const buttons = { inline_keyboard: inlineRows };
 
-    // Send
+    // --- 6. SEND (Auto-Fix Logic) ---
     try {
         if (p.photoId) {
-            await ctx.replyWithPhoto(p.photoId, { 
-                caption: caption, 
-                parse_mode: 'HTML', 
-                reply_markup: buttons 
-            });
+            try {
+                // Try sending the photo
+                await ctx.replyWithPhoto(p.photoId, { 
+                    caption: caption, 
+                    parse_mode: 'HTML', 
+                    reply_markup: buttons 
+                });
+            } catch (photoErr) {
+                // ⚠️ PHOTO FAILED (Because Bot Token Changed)
+                console.log(`⚠️ Invalid Photo detected for ${targetUser.telegramId}. Removing from DB.`);
+                
+                // 1. Remove the bad photo from the Database automatically
+                await User.updateOne({ telegramId: targetUser.telegramId }, { 'profile.photoId': null });
+                
+                // 2. Send the profile as TEXT only
+                await ctx.reply(caption, { 
+                    parse_mode: 'HTML', 
+                    reply_markup: buttons 
+                });
+            }
         } else {
+            // No photo existed anyway, send text
             await ctx.reply(caption, { 
                 parse_mode: 'HTML', 
                 reply_markup: buttons 
