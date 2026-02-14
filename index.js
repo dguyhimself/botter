@@ -1492,16 +1492,16 @@ async function showProfile(ctx, targetUser, isSelf) {
     if (targetUser.credits >= 300) {
         userBadge = '💎 <b>VVIP (Diamond)</b>'; 
     } 
-    // Middle Tier (100+ coins)
-    else if (targetUser.credits >= 100) {
+    // Middle Tier (120+ coins)
+    else if (targetUser.credits >= 120) {
         userBadge = '🌟 <b>VIP (Gold)</b>';
     }
 
-    // --- 2. GIFTS DISPLAY (Updated Hierarchy) ---
+    // --- 2. GIFTS DISPLAY ---
     let giftsDisplay = '';
     const g = targetUser.gifts || {};
     
-    // Check if they have ANY gifts (using new keys)
+    // Check if they have ANY gifts
     const hasGifts = (g.rose > 0 || g.diamond > 0 || g.crown > 0);
 
     if (hasGifts) {
@@ -1526,7 +1526,7 @@ async function showProfile(ctx, targetUser, isSelf) {
                     `🔰 <b>وضعیت:</b> ${userBadge}\n` + 
                     balanceInfo + 
                     `➖➖➖➖➖➖➖➖➖➖\n` +
-                    giftsDisplay + // <--- Gifts appear here
+                    giftsDisplay + 
                     `👤 <b>نام:</b> ${safeName}\n` +
                     `🎂 <b>سن:</b> ${p.age || 'تعیین نشده'}\n` +
                     `🚻 <b>جنسیت:</b> ${p.gender || 'تعیین نشده'}\n` +
@@ -1544,10 +1544,19 @@ async function showProfile(ctx, targetUser, isSelf) {
         ]
     ];
 
-    // Only show "Send Gift" if looking at SOMEONE ELSE
     if (!isSelf) {
+        // CHECK: Are we currently connected to this specific user?
+        const isChattingWithTarget = (ctx.user.status === 'chatting' && ctx.user.partnerId === targetUser.telegramId);
+
+        // Only show DM button if NOT chatting with them
+        if (!isChattingWithTarget) {
+            inlineRows.push([
+                { text: '📩 پیام مستقیم (۵۰ سکه)', callback_data: `dm_prep_${targetUser.telegramId}` }
+            ]);
+        }
+
         inlineRows.push([
-            // CHANGED: Fixed text, removed English words
+            // Gift Button
             { text: '🎁 اهدای هدیه', callback_data: `pre_gift_${targetUser.telegramId}` } 
         ]);
     }
