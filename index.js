@@ -8,6 +8,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
 const ADMIN_ID = parseInt(process.env.ADMIN_ID);
 const PORT = process.env.PORT || 3000;
+const spamMap = new Map(); // Stores user ID and timestamp in RAM
 
 if (!BOT_TOKEN || !MONGO_URI || !ADMIN_ID) {
     console.error('❌ Missing .env variables (BOT_TOKEN, MONGO_URI, or ADMIN_ID)');
@@ -305,24 +306,31 @@ bot.use(async (ctx, next) => {
         }
 
         // 3. Anti-Spam (Skip for Admin)
+        // 3. Anti-Spam (Skip for Admin) - RAM OPTIMIZED
         if (ctx.from.id !== ADMIN_ID && ctx.message) {
             const now = Date.now();
-            const timeDiff = now - user.lastMsgTimestamp;
+            const lastTime = spamMap.get(ctx.from.id) || 0;
             
             // Allow 1 message every 1.5 seconds
-            if (timeDiff < 1500) {
-                user.spamScore++;
+            if (now - lastTime < 1500) {
+                user.spamScore++; // Increment score in memory object
+                
                 if (user.spamScore > 4) {
                     user.muteUntil = new Date(now + 5 * 60000); // 5 min mute
                     user.spamScore = 0;
-                    await user.save();
+                    spamMap.delete(ctx.from.id); // Reset RAM timer
+                    await user.save(); // ⚠️ ONLY Save to DB when muting (Prevent Lag)
                     return ctx.reply(TEXTS.spam_warn);
                 }
             } else { 
                 user.spamScore = 0; 
             }
-            user.lastMsgTimestamp = now;
-            await user.save();
+            
+            // Update the time in RAM, NOT in the database
+            spamMap.set(ctx.from.id, now);
+            
+            // NOTE: We removed 'await user.save()' from here. 
+            // This prevents writing to the database on every single message.
         }
 
         ctx.user = user;
@@ -1443,7 +1451,7 @@ if (user.regStep === 'photo') {
 
             // Check B: Is it too long/tall? (Like a phone screenshot)
             // Ratio < 0.7 means it is very thin and tall
-            if (ratio < 0.75) {
+            if (ratio < 0.4) {
                 return ctx.reply('⚠️ <b>عکس خیلی دراز است!</b> (مثل اسکرین‌شات)\n\nلطفا یک عکس <b>مربعی (1:1)</b> یا <b>پرتره معمولی</b> بفرستید.\nربات عکس‌های تمام‌صفحه و دراز را قبول نمیکند.', { parse_mode: 'HTML' });
             }
 
