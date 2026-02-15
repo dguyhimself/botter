@@ -1511,7 +1511,7 @@ async function showProfile(ctx, targetUser, isSelf) {
     const hasGifts = (g.rose > 0 || g.diamond > 0 || g.crown > 0);
 
     if (hasGifts) {
-        giftsDisplay += `💎 <b>ویترین هدایا:</b>\n`; 
+        giftsDisplay += `🎁 <b>ویترین هدایا:</b>\n`; 
         if (g.diamond > 0) giftsDisplay += `💎 <b>${g.diamond}</b> الماس\n`;
         if (g.crown > 0)   giftsDisplay += `👑 <b>${g.crown}</b> تاج\n`;
         if (g.rose > 0)    giftsDisplay += `🌹 <b>${g.rose}</b> گل رز\n`;
