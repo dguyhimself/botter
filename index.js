@@ -186,6 +186,7 @@ const userSchema = new mongoose.Schema({
     searchPriority: { type: Number, default: 0 },
     credits: { type: Number, default: 0 },
     invitedBy: { type: Number },
+    referralCount: { type: Number, default: 0 }, // <--- NEW LINE ADDED
     stats: { 
         likes: { type: Number, default: 0 }, 
         dislikes: { type: Number, default: 0 },
@@ -578,11 +579,24 @@ bot.start(async (ctx) => {
         if (referrerId && referrerId !== ctx.from.id) {
             const referrer = await User.findOne({ telegramId: referrerId });
             if (referrer) {
-                referrer.credits += 5; 
-                await referrer.save();
-                try {
-                    await ctx.telegram.sendMessage(referrerId, `${TEXTS.referral_reward}\n💰 موجودی جدید: ${referrer.credits}`);
-                } catch (e) {}
+                // Initialize count if it doesn't exist yet
+                if (!referrer.referralCount) referrer.referralCount = 0;
+
+                // LIMIT CHECK: 20 users * 5 coins = 100 coins max
+                if (referrer.referralCount < 20) {
+                    referrer.credits += 5;
+                    referrer.referralCount += 1; // Increase their invite count
+                    await referrer.save();
+                    
+                    try {
+                        await ctx.telegram.sendMessage(referrerId, `${TEXTS.referral_reward}\n💰 موجودی جدید: ${referrer.credits}`);
+                    } catch (e) {}
+                } else {
+                    // Optional: Simply save that they invited someone, but DO NOT give coins
+                    referrer.referralCount += 1; 
+                    await referrer.save();
+                    // We do not send a message here, so they don't know they missed out (prevents spam complaints)
+                }
             }
         }
     }
