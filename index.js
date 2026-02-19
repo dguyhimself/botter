@@ -276,6 +276,12 @@ async function cleanPrev(ctx) {
     }
 }
 
+// --- NEW HELPER COMMAND TO GET ID ---
+// Add the bot to the group, then type /id inside the group to get the number
+bot.command('id', (ctx) => {
+    ctx.reply(`🆔 Chat ID: \`${ctx.chat.id}\``, { parse_mode: 'Markdown' });
+});
+
 // --- MIDDLEWARE (Security & User Loader) ---
 bot.use(async (ctx, next) => {
     try {
@@ -419,10 +425,6 @@ bot.command('channels', async (ctx) => {
 });
 
 // --- NEW HELPER COMMAND TO GET ID ---
-// Add the bot to the group, then type /id inside the group to get the number
-bot.command('id', (ctx) => {
-    ctx.reply(`🆔 Chat ID: \`${ctx.chat.id}\``, { parse_mode: 'Markdown' });
-});
 
 // Usage: /ban 12345 Reason
 bot.command('ban', async (ctx) => {
@@ -1376,26 +1378,28 @@ async function checkMembership(ctx) {
         } catch (e) {
             console.error(`Failed to check ${channel.id}:`, e.message);
             // If bot is not admin or ID is wrong, assume not joined to be safe
-            // Or push to notJoined so user sees the link to join
             notJoined.push(channel);
         }
     }
 
     if (notJoined.length === 0) return true; // Joined all
 
-    // --- BUILD UI ---
+    // --- BUILD PROFESSIONAL UI ---
     const buttons = [];
     notJoined.forEach((ch, index) => {
-        // We use the LINK for the button (e.g., https://t.me/+abcde...)
-        // We use the NAME for the button text
-        buttons.push([Markup.button.url(`📢 عضویت در ${ch.name || 'کانال ' + (index + 1)}`, ch.link)]);
+        // Use the link saved in DB, fall back to username if needed
+        const link = ch.link ? ch.link : `https://t.me/${ch.id}`; 
+        // Use the name saved in DB
+        const label = ch.name ? `📢 عضویت در ${ch.name}` : `📢 عضویت در کانال ${index + 1}`;
+        
+        buttons.push([Markup.button.url(label, link)]);
     });
 
     buttons.push([Markup.button.callback('✅ عضو شدم / ادامه', 'check_subscription')]);
 
     const joinMsg = `🔒 <b>عضویت ضروری</b>\n\n` +
-                    `برای استفاده از ربات، لطفا در گروه/کانال‌های زیر عضو شوید:\n\n` +
-                    `<i>(پس از عضویت، دکمه "عضو شدم" را بزنید)</i>`;
+                    `دوست عزیز برای استفاده از ربات و حمایت از ما، لطفا در کانال‌های زیر عضو شوید و سپس دکمه <b>"عضو شدم"</b> را بزنید.\n\n` +
+                    `<i>(استفاده از ربات کاملا رایگان است، عضویت شما تنها حمایت از ماست ❤️)</i>`;
 
     await ctx.reply(joinMsg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } });
     return false;
