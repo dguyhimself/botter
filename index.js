@@ -215,7 +215,8 @@ const User = mongoose.model('User', userSchema);
 // --- ADD THIS NOW ---
 const configSchema = new mongoose.Schema({
     id: { type: String, default: 'global' },
-    requiredChannels: { type: [String], default: [] }
+    // We change this to 'Array' so it can store objects like { id, link, name }
+    requiredChannels: { type: Array, default: [] } 
 });
 const Config = mongoose.model('Config', configSchema);
 
@@ -344,54 +345,83 @@ bot.use(async (ctx, next) => {
 // --- ADMIN COMMANDS ---
 // --- ADD THESE NEW ADMIN COMMANDS ---
 
+// Usage: /addchannel -100123456789 https://t.me/+YourLink MyGroup
 bot.command('addchannel', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    const channel = ctx.message.text.split(' ')[1];
     
-    if (!channel) return ctx.reply('❌ لطفا آیدی کانال را وارد کنید.\nمثال: /addchannel @MyChannel');
+    const args = ctx.message.text.split(' ');
+    const chatId = args[1];
+    const link = args[2];
+    // Join the rest of the arguments to make the name (e.g., "My Best Group")
+    const name = args.slice(3).join(' ');
+
+    if (!chatId || !link || !name) {
+        return ctx.reply('❌ فرمت اشتباه است!\n✅ مثال:\n<code>/addchannel -100123456789 https://t.me/+AbCdEfGhIjK GroupName</code>', { parse_mode: 'HTML' });
+    }
 
     try {
-        // Verify bot is admin there first
-        const chatMember = await ctx.telegram.getChatMember(channel, ctx.botInfo.id);
+        // Check if bot is admin there (Bot must be added to the private group first!)
+        const chatMember = await ctx.telegram.getChatMember(chatId, ctx.botInfo.id);
         if (chatMember.status !== 'administrator') {
-            return ctx.reply('⚠️ ربات در کانال مورد نظر **ادمین** نیست!\nابتدا ربات را ادمین کنید.');
+            return ctx.reply('⚠️ ربات در گروه/کانال مورد نظر **ادمین** نیست!\nابتدا ربات را اد کنید و دسترسی ادمین بدهید.');
         }
 
         const config = await Config.findOne({ id: 'global' });
-        if (!config.requiredChannels.includes(channel)) {
-            config.requiredChannels.push(channel);
+        
+        // Check if already exists
+        const exists = config.requiredChannels.find(c => c.id === chatId);
+        if (!exists) {
+            config.requiredChannels.push({ id: chatId, link: link, name: name });
+            // We must mark the array as modified for Mongoose to save mixed types
+            config.markModified('requiredChannels'); 
             await config.save();
-            ctx.reply(`✅ کانال ${channel} به لیست قفل اضافه شد.`);
+            ctx.reply(`✅ کانال/گروه **${name}** با موفقیت اضافه شد.`);
         } else {
             ctx.reply('⚠️ این کانال قبلاً اضافه شده است.');
         }
     } catch (e) {
-        ctx.reply('❌ خطا: ربات نمیتواند کانال را پیدا کند (یا ادمین نیست).');
+        console.error(e);
+        ctx.reply('❌ خطا: ربات نتوانست گروه را پیدا کند.\n1. مطمئن شوید ربات در گروه ادمین است.\n2. مطمئن شوید آیدی عددی (-100...) صحیح است.');
     }
 });
 
 bot.command('delchannel', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
-    const channel = ctx.message.text.split(' ')[1];
-    if (!channel) return ctx.reply('❌ آیدی کانال را وارد کنید.');
+    const chatId = ctx.message.text.split(' ')[1]; // Delete by ID
+    if (!chatId) return ctx.reply('❌ آیدی عددی کانال را وارد کنید.');
 
     const config = await Config.findOne({ id: 'global' });
-    const newList = config.requiredChannels.filter(c => c !== channel);
     
-    if (newList.length === config.requiredChannels.length) {
-        return ctx.reply('⚠️ این کانال در لیست نبود.');
+    const initialLength = config.requiredChannels.length;
+    // Filter out the one with matching ID
+    config.requiredChannels = config.requiredChannels.filter(c => c.id !== chatId);
+    
+    if (config.requiredChannels.length === initialLength) {
+        return ctx.reply('⚠️ کانالی با این آیدی پیدا نشد.');
     }
 
-    config.requiredChannels = newList;
+    config.markModified('requiredChannels');
     await config.save();
-    ctx.reply(`🗑 کانال ${channel} از لیست حذف شد.`);
+    ctx.reply(`🗑 کانال ${chatId} حذف شد.`);
 });
 
 bot.command('channels', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     const config = await Config.findOne({ id: 'global' });
-    if (config.requiredChannels.length === 0) return ctx.reply('📭 لیست کانال‌ها خالی است.');
-    ctx.reply(`📢 کانال‌های قفل شده:\n\n${config.requiredChannels.join('\n')}`);
+    if (config.requiredChannels.length === 0) return ctx.reply('📭 لیست خالی است.');
+    
+    let msg = '📢 **لیست قفل‌ها:**\n\n';
+    config.requiredChannels.forEach(c => {
+        msg += `📛 نام: ${c.name}\n🆔 آیدی: \`${c.id}\`\n🔗 لینک: ${c.link}\n➖➖➖➖➖\n`;
+    });
+    
+    ctx.reply(msg, { parse_mode: 'Markdown' });
+});
+
+// --- NEW HELPER COMMAND TO GET ID ---
+// Add the bot to the group, then type /id inside the group to get the number
+bot.command('id', (ctx) => {
+    ctx.reply(`🆔 Chat ID: \`${ctx.chat.id}\``, { parse_mode: 'Markdown' });
 });
 
 // Usage: /ban 12345 Reason
@@ -1327,24 +1357,49 @@ bot.action(/^rep_(.*)_(.*)$/, async (ctx) => {
 });
 
 // --- HELPER: CHECK MEMBERSHIP ---
+// --- HELPER: CHECK MEMBERSHIP (UPDATED FOR PRIVATE LINKS) ---
 async function checkMembership(ctx) {
     const config = await Config.findOne({ id: 'global' });
-    if (!config || config.requiredChannels.length === 0) return true; // No channels to check
+    if (!config || config.requiredChannels.length === 0) return true; 
 
     const notJoined = [];
     
     for (const channel of config.requiredChannels) {
         try {
-            const res = await ctx.telegram.getChatMember(channel, ctx.from.id);
-            // If user is left, kicked, or restricted(without permission), they need to join
+            // We use the ID to check membership (e.g., -100123456789)
+            const res = await ctx.telegram.getChatMember(channel.id, ctx.from.id);
+            
+            // If left, kicked, or restricted, they need to join
             if (['left', 'kicked'].includes(res.status)) {
                 notJoined.push(channel);
             }
         } catch (e) {
-            // If bot fails to check (not admin), we usually ignore or assume joined to prevent blocking users
-            console.error(`Failed to check ${channel}:`, e.message);
+            console.error(`Failed to check ${channel.id}:`, e.message);
+            // If bot is not admin or ID is wrong, assume not joined to be safe
+            // Or push to notJoined so user sees the link to join
+            notJoined.push(channel);
         }
     }
+
+    if (notJoined.length === 0) return true; // Joined all
+
+    // --- BUILD UI ---
+    const buttons = [];
+    notJoined.forEach((ch, index) => {
+        // We use the LINK for the button (e.g., https://t.me/+abcde...)
+        // We use the NAME for the button text
+        buttons.push([Markup.button.url(`📢 عضویت در ${ch.name || 'کانال ' + (index + 1)}`, ch.link)]);
+    });
+
+    buttons.push([Markup.button.callback('✅ عضو شدم / ادامه', 'check_subscription')]);
+
+    const joinMsg = `🔒 <b>عضویت ضروری</b>\n\n` +
+                    `برای استفاده از ربات، لطفا در گروه/کانال‌های زیر عضو شوید:\n\n` +
+                    `<i>(پس از عضویت، دکمه "عضو شدم" را بزنید)</i>`;
+
+    await ctx.reply(joinMsg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } });
+    return false;
+}
 
     if (notJoined.length === 0) return true; // Joined all
 
