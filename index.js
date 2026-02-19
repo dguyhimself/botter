@@ -1405,27 +1405,6 @@ async function checkMembership(ctx) {
     return false;
 }
 
-    if (notJoined.length === 0) return true; // Joined all
-
-    // --- BUILD PROFESSIONAL UI ---
-    const buttons = [];
-    notJoined.forEach((ch, index) => {
-        // We can try to get invite link or just use username
-        // Cleaning username to remove '@' for url if needed, but telegram.me works with @
-        const cleanName = ch.replace('@', '');
-        buttons.push([Markup.button.url(`📢 عضویت در کانال ${index + 1}`, `https://t.me/${cleanName}`)]);
-    });
-
-    buttons.push([Markup.button.callback('✅ عضو شدم / ادامه', 'check_subscription')]);
-
-    const joinMsg = `🔒 <b>عضویت ضروری</b>\n\n` +
-                    `دوست عزیز برای استفاده از ربات و حمایت از ما، لطفا در کانال‌های زیر عضو شوید و سپس دکمه <b>"عضو شدم"</b> را بزنید.\n\n` +
-                    `<i>(استفاده از ربات کاملا رایگان است، عضویت شما تنها حمایت از ماست ❤️)</i>`;
-
-    await ctx.reply(joinMsg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } });
-    return false;
-}
-
 // --- REGISTRATION STEP HANDLER ---
 async function stepHandler(ctx) {
     const user = ctx.user;
