@@ -424,6 +424,15 @@ bot.command('channels', async (ctx) => {
     ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
+bot.command('clearchannels', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    const config = await Config.findOne({ id: 'global' });
+    config.requiredChannels = [];
+    config.markModified('requiredChannels');
+    await config.save();
+    ctx.reply('✅ تمامی کانال‌ها از دیتابیس حذف شدند. حالا می‌توانید با فرمت جدید اضافه کنید.');
+});
+
 // --- NEW HELPER COMMAND TO GET ID ---
 
 // Usage: /ban 12345 Reason
@@ -1360,49 +1369,63 @@ bot.action(/^rep_(.*)_(.*)$/, async (ctx) => {
 
 // --- HELPER: CHECK MEMBERSHIP ---
 // --- HELPER: CHECK MEMBERSHIP (UPDATED FOR PRIVATE LINKS) ---
+// --- HELPER: CHECK MEMBERSHIP (FIXED & SECURE) ---
 async function checkMembership(ctx) {
-    const config = await Config.findOne({ id: 'global' });
-    if (!config || config.requiredChannels.length === 0) return true; 
+    try {
+        const config = await Config.findOne({ id: 'global' });
+        if (!config || !config.requiredChannels || config.requiredChannels.length === 0) return true; 
 
-    const notJoined = [];
-    
-    for (const channel of config.requiredChannels) {
-        try {
-            // We use the ID to check membership (e.g., -100123456789)
-            const res = await ctx.telegram.getChatMember(channel.id, ctx.from.id);
-            
-            // If left, kicked, or restricted, they need to join
-            if (['left', 'kicked'].includes(res.status)) {
+        const notJoined = [];
+        
+        for (const channel of config.requiredChannels) {
+            // Safety Guard: If the channel is just a string (old data), skip it or handle it
+            if (typeof channel !== 'object' || !channel.id) {
+                console.log("⚠️ Skipping invalid channel data:", channel);
+                continue; 
+            }
+
+            try {
+                const res = await ctx.telegram.getChatMember(channel.id, ctx.from.id);
+                if (['left', 'kicked'].includes(res.status)) {
+                    notJoined.push(channel);
+                }
+            } catch (e) {
+                console.error(`Error checking ID ${channel.id}:`, e.message);
+                // If ID is wrong or bot was kicked, we must show the link to user
                 notJoined.push(channel);
             }
-        } catch (e) {
-            console.error(`Failed to check ${channel.id}:`, e.message);
-            // If bot is not admin or ID is wrong, assume not joined to be safe
-            notJoined.push(channel);
         }
-    }
 
-    if (notJoined.length === 0) return true; // Joined all
+        if (notJoined.length === 0) return true; 
 
-    // --- BUILD PROFESSIONAL UI ---
-    const buttons = [];
-    notJoined.forEach((ch, index) => {
-        // Use the link saved in DB, fall back to username if needed
-        const link = ch.link ? ch.link : `https://t.me/${ch.id}`; 
-        // Use the name saved in DB
-        const label = ch.name ? `📢 عضویت در ${ch.name}` : `📢 عضویت در کانال ${index + 1}`;
+        // --- BUILD INLINE BUTTONS ---
+        const inlineButtons = [];
         
-        buttons.push([Markup.button.url(label, link)]);
-    });
+        notJoined.forEach((ch, index) => {
+            const label = ch.name ? `📢 عضویت در ${ch.name}` : `📢 عضویت در کانال ${index + 1}`;
+            const link = ch.link || `https://t.me/telegram`; // Fallback link
 
-    buttons.push([Markup.button.callback('✅ عضو شدم / ادامه', 'check_subscription')]);
+            // Use the most basic structure to avoid Telegraf Markup errors
+            inlineButtons.push([{ text: label, url: link }]);
+        });
 
-    const joinMsg = `🔒 <b>عضویت ضروری</b>\n\n` +
-                    `دوست عزیز برای استفاده از ربات و حمایت از ما، لطفا در کانال‌های زیر عضو شوید و سپس دکمه <b>"عضو شدم"</b> را بزنید.\n\n` +
-                    `<i>(استفاده از ربات کاملا رایگان است، عضویت شما تنها حمایت از ماست ❤️)</i>`;
+        // Add the "Check" button at the bottom
+        inlineButtons.push([{ text: '✅ عضو شدم / ادامه', callback_data: 'check_subscription' }]);
 
-    await ctx.reply(joinMsg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: buttons } });
-    return false;
+        const joinMsg = `🔒 <b>عضویت ضروری</b>\n\n` +
+                        `برای استفاده از ربات، لطفا در کانال‌های زیر عضو شوید:\n\n` +
+                        `<i>(پس از عضویت، دکمه "عضو شدم" را بزنید)</i>`;
+
+        await ctx.reply(joinMsg, { 
+            parse_mode: 'HTML', 
+            reply_markup: { inline_keyboard: inlineButtons } 
+        });
+        
+        return false;
+    } catch (err) {
+        console.error("Critical checkMembership Error:", err);
+        return true; 
+    }
 }
 
 // --- REGISTRATION STEP HANDLER ---
