@@ -1304,28 +1304,52 @@ bot.action(/^gift_(.*)$/, async (ctx) => {
 bot.action('cancel_gift', async (ctx) => {
     await ctx.deleteMessage();
 });
-
-// --- CHECK SUBSCRIPTION BUTTON ---
+// --- CHECK SUBSCRIPTION ACTION (FIXED) ---
 bot.action('check_subscription', async (ctx) => {
-    // Re-run the check logic
-    const config = await Config.findOne({ id: 'global' });
-    let allJoined = true;
+    try {
+        const config = await Config.findOne({ id: 'global' });
+        
+        // If no channels are set, just let them in
+        if (!config || !config.requiredChannels || config.requiredChannels.length === 0) {
+            await ctx.deleteMessage().catch(() => {});
+            return ctx.reply('✅ تشکر! حالا میتوانید وصل شوید.', getMainMenu());
+        }
 
-    for (const channel of config.requiredChannels) {
-        try {
-            const res = await ctx.telegram.getChatMember(channel, ctx.from.id);
-            if (['left', 'kicked'].includes(res.status)) {
+        let allJoined = true;
+
+        for (const channel of config.requiredChannels) {
+            // Safety: Skip if data is corrupted
+            if (!channel.id) continue;
+
+            try {
+                // 🔥 CRITICAL FIX: Use channel.id, not the whole channel object
+                const res = await ctx.telegram.getChatMember(channel.id, ctx.from.id);
+                
+                // If status is 'left' or 'kicked', they are NOT members
+                if (['left', 'kicked'].includes(res.status)) {
+                    allJoined = false;
+                    break; 
+                }
+            } catch (e) {
+                // If the bot can't check (e.g., bot was kicked from group),
+                // we treat it as NOT joined to keep the bot secure.
+                console.error(`Error verifying membership for ${channel.id}:`, e.message);
                 allJoined = false;
                 break;
             }
-        } catch (e) { }
-    }
+        }
 
-    if (allJoined) {
-        await ctx.deleteMessage(); // Remove the "Join" message
-        await ctx.reply('✅ تشکر از حمایت شما! حالا میتوانید وصل شوید.', getMainMenu());
-    } else {
-        await ctx.answerCbQuery('❌ شما هنوز در تمام کانال‌ها عضو نشده‌اید!', { show_alert: true });
+        if (allJoined) {
+            await ctx.answerCbQuery('✅ عضویت تایید شد!');
+            await ctx.deleteMessage().catch(() => {}); // Remove the join message
+            await ctx.reply('✅ تشکر از حمایت شما! حالا میتوانید از ربات استفاده کنید.', getMainMenu());
+        } else {
+            // Show a popup alert to the user
+            await ctx.answerCbQuery('❌ شما هنوز در تمام کانال‌ها عضو نشده‌اید!', { show_alert: true });
+        }
+    } catch (err) {
+        console.error("Check Sub Action Error:", err);
+        await ctx.answerCbQuery('⚠️ خطایی رخ داد، لطفا دوباره تلاش کنید.');
     }
 });
 
